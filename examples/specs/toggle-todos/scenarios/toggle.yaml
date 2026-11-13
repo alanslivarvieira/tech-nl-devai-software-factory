@@ -1,0 +1,46 @@
+suite: toggle
+cases:
+  - name: toggling marks a todo as done
+    ac_id: AC-2
+    given:
+      - {op: add, input: {title: buy milk}}
+      - {op: add, input: {title: walk the dog}}
+    when: {op: toggle, input: {title: buy milk}}
+    then:
+      output: {title: buy milk, done: true}
+      state:
+        - op: list
+          output: {items: [{title: buy milk, done: true}, {title: walk the dog, done: false}]}
+        - {op: remaining, output: {count: 1}}
+
+  - name: toggling twice reactivates the todo
+    ac_id: AC-2
+    given:
+      - {op: add, input: {title: buy milk}}
+      - {op: toggle, input: {title: buy milk}}
+    when: {op: toggle, input: {title: buy milk}}
+    then:
+      output_subset: {done: false}
+      state:
+        - {op: remaining, output: {count: 1}}
+
+  - name: remaining counts only open todos
+    ac_id: AC-3
+    given:
+      - {op: add, input: {title: a}}
+      - {op: add, input: {title: b}}
+      - {op: add, input: {title: c}}
+      - {op: toggle, input: {title: b}}
+    when: {op: remaining}
+    then:
+      output: {count: 2}
+
+  - name: toggling an unknown todo is rejected
+    ac_id: AC-4
+    given:
+      - {op: add, input: {title: buy milk}}
+    when: {op: toggle, input: {title: buy bread}}
+    then:
+      error: 'No todo titled "buy bread"'
+      state:
+        - {op: remaining, output: {count: 1}}

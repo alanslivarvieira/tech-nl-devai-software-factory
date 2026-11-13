@@ -1,0 +1,2 @@
+# Add to the TARGET repository's CODEOWNERS: contract changes always need a human owner's review.
+/.factory/specs/   @your-org/feature-owners

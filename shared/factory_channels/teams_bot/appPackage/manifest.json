@@ -1,0 +1,41 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "0.1.0",
+  "id": "${{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "Tech NL DevAI",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": { "short": "AI Software Factory", "full": "AI Software Factory" },
+  "description": {
+    "short": "Grill → tests-as-data contract → build → verify → PR.",
+    "full": "Chat with the AI software factory to get features built in a repository. It grills you into an executable contract (tests as data), builds it with your chosen coding agent, verifies it in a clean context with unit, Gherkin, property and mutation tests, and opens a pull request."
+  },
+  "icons": { "color": "color.png", "outline": "outline.png" },
+  "accentColor": "#5319E7",
+  "bots": [
+    {
+      "botId": "${{BOT_ID}}",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupChat"],
+          "commands": [
+            { "title": "build", "description": "build <what> in <owner/repo>[@branch]" },
+            { "title": "/approve", "description": "Freeze the draft contract and start building" },
+            { "title": "/engine", "description": "/engine copilot|claude|codex" },
+            { "title": "/status", "description": "What is the factory doing?" },
+            { "title": "/abort", "description": "Stop the current feature" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

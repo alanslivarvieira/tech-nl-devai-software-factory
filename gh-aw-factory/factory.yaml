@@ -1,0 +1,9 @@
+# Factory thresholds — live in the HUB repo, never in target repos, so agents cannot lower them.
+diff_coverage_threshold: 80
+mutation_threshold: 70
+max_mutants: 150
+stall_limit: 3
+max_iterations: 0
+gate_timeout_s: 900
+default_engine: copilot
+run_setup: true

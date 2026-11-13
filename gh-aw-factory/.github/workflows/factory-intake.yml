@@ -1,0 +1,33 @@
+# Entry point: the Teams bot (or anyone) sends a repository_dispatch, or run it by hand.
+name: factory-intake
+on:
+  repository_dispatch:
+    types: [factory-request]
+  workflow_dispatch:
+    inputs:
+      repo: { description: "Target repository (owner/name)", required: true, type: string }
+      base: { description: "Base branch", required: false, type: string, default: main }
+      request: { description: "What should be built?", required: true, type: string }
+      engine: { description: "Coding agent", required: false, type: choice, options: [copilot, claude, codex], default: copilot }
+      requester: { description: "Who asked", required: false, type: string, default: "" }
+permissions:
+  contents: read
+  issues: write
+  actions: write
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.FACTORY_APP_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      - run: python gh-aw-factory/scripts/intake.py
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          FACTORY_DEFAULT_ENGINE: ${{ vars.FACTORY_DEFAULT_ENGINE || 'copilot' }}

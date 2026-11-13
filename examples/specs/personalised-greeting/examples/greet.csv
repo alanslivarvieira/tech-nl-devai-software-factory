@@ -1,0 +1,7 @@
+case,ac_id,baseline,in.name,out.greeting,error
+default greeting,AC-1,existing,,"Hello, world!",
+personalised greeting,AC-2,,Joe,"Hello, Joe!",
+name is trimmed,AC-2,,"  Ann  ","Hello, Ann!",
+unicode name,AC-2,,Zoë,"Hello, Zoë!",
+whitespace-only name rejected,AC-3,," ",,Name must not be entirely whitespace
+empty name rejected,AC-3,,<empty>,,Name must not be entirely whitespace

@@ -1,0 +1,38 @@
+[tool.uv.workspace]
+members = ["shared", "langgraph-factory"]
+
+[tool.uv.sources]
+factory-shared = { workspace = true }
+factory-langgraph = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "factory-shared[teams]",
+  "factory-langgraph",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "diff-cover>=9",
+  "ruff>=0.6",
+  "hypothesis>=6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["shared/tests", "langgraph-factory/tests", "gh-aw-factory/tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning:langsmith.*"]
+markers = [
+  "e2e: end-to-end runs over example target repos (slower)",
+  "docker: needs a docker daemon",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["examples/targets", "examples/specs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF100"]
+ignore = ["B008", "E731"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["factory_core", "factory_channels", "factory_app"]

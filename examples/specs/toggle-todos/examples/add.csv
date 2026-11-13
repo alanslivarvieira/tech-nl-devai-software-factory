@@ -1,0 +1,4 @@
+case,ac_id,baseline,in.title,out.title,out.done:bool,error
+adds a todo,AC-1,existing,buy milk,buy milk,false,
+trims the title,AC-1,existing,"  walk the dog ",walk the dog,false,
+rejects an empty title,AC-1,existing,<empty>,,,Title must not be empty

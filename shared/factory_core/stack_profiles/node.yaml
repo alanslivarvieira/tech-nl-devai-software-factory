@@ -1,0 +1,55 @@
+name: node
+toolchain_hint: "Node 20+, npm; any test runner exposed through `npm test`"
+detect:
+  any_files: ["package.json"]
+  priority: 40
+src_globs: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"]
+test_globs: ["test/**", "tests/**", "__tests__/**", "**/*.test.*", "**/*.spec.*"]
+exclude_globs: [".factory/**", ".git/**", "node_modules/**", "dist/**", "coverage/**"]
+guarded_files: [".c8rc*", ".nycrc*", "stryker.conf.*", "jest.config.*", "vitest.config.*", ".mocharc*",
+                ".github/workflows/**", "CODEOWNERS", ".github/CODEOWNERS"]
+guarded_line_patterns:
+  - '"?(branches|lines|functions|statements)"?\s*:\s*\d+'
+  - 'thresholds'
+  - 'coverageThreshold'
+  - '"test"\s*:'
+skip_markers:
+  - '\b(it|test|describe)\.skip\('
+  - '\bx(it|describe|test)\('
+  - '\.todo\('
+  - '\{\s*skip\s*:\s*true'
+coverage_exclusions: ['(istanbul|c8|v8)\s+ignore', 'Stryker\s+disable']
+assertion_patterns: ['\bexpect\(', '\bassert\b', '\.should\b']
+driver_template: drivers/driver_node.mjs
+setup:
+  - argv: ["npm", "install", "--no-audit", "--no-fund"]
+    needs: [npm]
+commands:
+  lint:
+    argv: ["npx", "--no-install", "eslint", "{changed_src...}"]
+    required: false
+    needs: [npx]
+    skip_if_no_changed_src: true
+  typecheck:
+    argv: ["npx", "--no-install", "tsc", "--noEmit"]
+    required: false
+    needs: [npx]
+  build:
+    argv: ["npm", "run", "build", "--if-present"]
+    needs: [npm]
+  unit:
+    argv: ["npx", "--yes", "c8", "--reporter=cobertura", "--reporter=text-summary", "--report-dir={out}", "npm", "test"]
+    needs: [npx]
+  diff_coverage:
+    argv: ["diff-cover", "{out}/cobertura-coverage.xml", "--compare-branch={base_sha}",
+           "--fail-under={diff_coverage_threshold}"]
+    needs: [diff-cover]
+  mutation:
+    - argv: ["npx", "--yes", "@stryker-mutator/core", "run", "--mutate", "{changed_src_csv}",
+             "--testRunner", "command", "--reporters", "json", "--jsonReporter.fileName", "{out}/mutation.json"]
+      needs: [npx]
+      skip_if_no_changed_src: true
+    - argv: ["{python}", "-m", "factory_core.mutation.score", "--stryker", "{out}/mutation.json",
+             "--threshold", "{mutation_threshold}"]
+      skip_if_no_changed_src: true
+  regression: null

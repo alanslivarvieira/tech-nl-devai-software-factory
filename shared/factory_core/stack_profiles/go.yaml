@@ -1,0 +1,36 @@
+name: go
+toolchain_hint: "Go 1.22+; go test, go-mutesting, golangci-lint"
+detect:
+  any_files: ["go.mod"]
+  priority: 30
+src_globs: ["**/*.go"]
+test_globs: ["**/*_test.go", "testdata/**"]
+guarded_files: [".golangci.yml", ".golangci.yaml", ".github/workflows/**", "CODEOWNERS"]
+guarded_line_patterns: ['-coverpkg', 'covermode']
+skip_markers: ['\bt\.Skip(f|Now)?\(', '//\s*\+build\s+ignore', '//go:build\s+ignore']
+coverage_exclusions: []
+assertion_patterns: ['\bt\.(Error|Fatal)', '\bassert\.', '\brequire\.']
+setup:
+  - argv: ["go", "mod", "download"]
+    needs: [go]
+commands:
+  lint:
+    argv: ["golangci-lint", "run"]
+    required: false
+    needs: [golangci-lint]
+  typecheck:
+    argv: ["go", "vet", "./..."]
+    needs: [go]
+  build:
+    argv: ["go", "build", "./..."]
+    needs: [go]
+  unit:
+    argv: ["go", "test", "./...", "-coverprofile={out}/cover.out"]
+    needs: [go]
+  diff_coverage: null  # enable by converting cover.out with gocover-cobertura in the sandbox image
+  mutation:
+    - argv: ["go-mutesting", "./..."]
+      needs: [go-mutesting]
+      required: false
+      skip_if_no_changed_src: true
+  regression: null

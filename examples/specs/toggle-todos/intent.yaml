@@ -1,0 +1,31 @@
+feature_id: toggle-todos
+title: Toggle todos
+summary: >-
+  Users can mark a todo as done (or not done again) by its title and see how many items are left.
+  Toggling an unknown title is rejected with a clear error.
+repo:
+  url: examples/targets/node-todo
+  base_branch: main
+stack: node
+engine: copilot
+actors: [todo list user]
+scope_in: [toggle a todo by title, count remaining todos]
+scope_out: [persistence, renaming todos]
+acceptance_criteria:
+  - id: AC-1
+    description: adding todos keeps working (title trimmed, empty titles rejected)
+  - id: AC-2
+    description: toggle(title) flips `done` and returns the updated todo
+  - id: AC-3
+    description: remaining() returns the number of todos that are not done
+  - id: AC-4
+    description: toggling an unknown title fails with 'No todo titled "<title>"'
+interface:
+  kind: jsonl
+  command: ["node", "{spec_dir}/driver/driver.mjs"]
+  entrypoint_hint: "ES module src/todo.js exporting add(title), list(), toggle(title), remaining()"
+  ops:
+    - {name: add, input: {title: string}, output: {title: string, done: boolean}}
+    - {name: list, output: {items: "list of {title, done}"}}
+    - {name: toggle, input: {title: string}, output: {title: string, done: boolean}}
+    - {name: remaining, output: {count: integer}}

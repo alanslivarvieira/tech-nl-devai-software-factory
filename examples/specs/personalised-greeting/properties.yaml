@@ -1,0 +1,11 @@
+properties:
+  - name: any letters-only name is echoed in the greeting
+    ac_id: AC-2
+    op: greet
+    examples: 60
+    input:
+      name: {type: string, alphabet: letters, min_size: 1, max_size: 20}
+    expect:
+      - {path: greeting, starts_with: "Hello, "}
+      - {path: greeting, ends_with: "!"}
+      - {path: greeting, contains_input: name}

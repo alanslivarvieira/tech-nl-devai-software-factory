@@ -1,0 +1,39 @@
+name: java
+toolchain_hint: "JDK 21 + Maven; JUnit5, JaCoCo, PIT"
+detect:
+  any_files: ["pom.xml"]
+  priority: 30
+src_globs: ["src/main/**/*.java", "src/main/**/*.kt"]
+test_globs: ["src/test/**"]
+guarded_files: [".github/workflows/**", "CODEOWNERS", ".github/CODEOWNERS"]
+guarded_line_patterns:
+  - '<(minimum|coverageThreshold|mutationThreshold)>'
+  - 'jacoco.*(minimum|limit)'
+  - '<skipTests>'
+  - 'maven\.test\.skip'
+skip_markers: ['@Disabled\b', '@Ignore\b', 'Assumptions\.assume', 'assumeTrue\(']
+coverage_exclusions: ['@Generated\b']
+assertion_patterns: ['\bassert\w*\(', '\bverify\(']
+setup: []
+commands:
+  build:
+    argv: ["mvn", "-q", "-B", "-DskipTests", "compile"]
+    needs: [mvn]
+  unit:
+    argv: ["mvn", "-q", "-B", "test", "org.jacoco:jacoco-maven-plugin:0.8.12:report"]
+    needs: [mvn]
+  diff_coverage:
+    argv: ["diff-cover", "target/site/jacoco/jacoco.xml", "--src-roots", "src/main/java",
+           "--compare-branch={base_sha}", "--fail-under={diff_coverage_threshold}"]
+    needs: [diff-cover]
+  mutation:
+    - argv: ["mvn", "-q", "-B", "org.pitest:pitest-maven:1.17.0:mutationCoverage", "-DoutputFormats=XML",
+             "-DtimestampedReports=false"]
+      needs: [mvn]
+      skip_if_no_changed_src: true
+    - argv: ["{python}", "-m", "factory_core.mutation.score", "--pit", "target/pit-reports/mutations.xml",
+             "--threshold", "{mutation_threshold}"]
+      skip_if_no_changed_src: true
+  regression:
+    argv: ["mvn", "-q", "-B", "verify"]
+    needs: [mvn]

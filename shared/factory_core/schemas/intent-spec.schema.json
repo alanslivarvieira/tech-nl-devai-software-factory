@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^AC-\\d+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "description"
+      ],
+      "title": "AcceptanceCriterion",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "answer"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "HttpRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "default": "POST",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "HttpRoute",
+      "type": "object"
+    },
+    "InterfaceSpec": {
+      "additionalProperties": false,
+      "description": "How the factory-owned runner reaches the system under test.\n\n* ``jsonl`` \u2013 a driver process (``command``) speaking JSON lines on stdin/stdout (default).\n* ``http``  \u2013 call HTTP routes on ``base_url`` (optionally starting ``command`` first).\n* ``cli``   \u2013 run a command line per op (``cli[op]`` is an argv template with ``{field}``).",
+      "properties": {
+        "kind": {
+          "default": "jsonl",
+          "enum": [
+            "jsonl",
+            "http",
+            "cli"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "routes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/HttpRoute"
+          },
+          "title": "Routes",
+          "type": "object"
+        },
+        "cli": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Cli",
+          "type": "object"
+        },
+        "ops": {
+          "items": {
+            "$ref": "#/$defs/OpSpec"
+          },
+          "minItems": 1,
+          "title": "Ops",
+          "type": "array"
+        },
+        "timeout_s": {
+          "default": 15.0,
+          "title": "Timeout S",
+          "type": "number"
+        },
+        "entrypoint_hint": {
+          "default": "",
+          "description": "Where the production code must expose this behaviour (module/route/cmd).",
+          "title": "Entrypoint Hint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ops"
+      ],
+      "title": "InterfaceSpec",
+      "type": "object"
+    },
+    "OpSpec": {
+      "additionalProperties": false,
+      "description": "A DSL operation the tests use. The driver maps it onto the system's public interface.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z_][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "field -> type/description",
+          "title": "Input",
+          "type": "object"
+        },
+        "output": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "field -> type/description",
+          "title": "Output",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "OpSpec",
+      "type": "object"
+    },
+    "RepoRef": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "base_branch": {
+          "default": "main",
+          "title": "Base Branch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "RepoRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "feature_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "title": "Feature Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "repo": {
+      "$ref": "#/$defs/RepoRef"
+    },
+    "stack": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stack"
+    },
+    "engine": {
+      "default": "copilot",
+      "enum": [
+        "copilot",
+        "claude",
+        "codex"
+      ],
+      "title": "Engine",
+      "type": "string"
+    },
+    "actors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Actors",
+      "type": "array"
+    },
+    "scope_in": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Scope In",
+      "type": "array"
+    },
+    "scope_out": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Scope Out",
+      "type": "array"
+    },
+    "acceptance_criteria": {
+      "items": {
+        "$ref": "#/$defs/AcceptanceCriterion"
+      },
+      "minItems": 1,
+      "title": "Acceptance Criteria",
+      "type": "array"
+    },
+    "interface": {
+      "$ref": "#/$defs/InterfaceSpec"
+    },
+    "nfrs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Nfrs",
+      "type": "array"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "approved_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved By"
+    }
+  },
+  "required": [
+    "feature_id",
+    "title",
+    "summary",
+    "repo",
+    "acceptance_criteria",
+    "interface"
+  ],
+  "title": "IntentSpec",
+  "type": "object"
+}

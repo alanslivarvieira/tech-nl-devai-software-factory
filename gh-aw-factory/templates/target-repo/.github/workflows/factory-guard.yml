@@ -1,0 +1,30 @@
+# Copy into every TARGET repository and make it a required status check on the default branch.
+# Second line of defence: even if something slipped past the factory, a PR from a factory/* branch cannot
+# merge when the approved contract was modified or the change breaks the anti-cheat rules.
+name: factory-guard
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  guard:
+    if: startsWith(github.head_ref, 'factory/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install the factory guard (pinned to the hub repo release you trust)
+        run: pip install "factory-shared @ git+https://github.com/${{ vars.FACTORY_HUB_REPO }}@${{ vars.FACTORY_HUB_REF || 'main' }}#subdirectory=shared"
+      - name: Verify contract hash-lock and agent-change rules
+        run: |
+          set -euo pipefail
+          FREEZE=$(git log --format=%H --grep '^factory: freeze contract' -n 1 HEAD)
+          if [ -z "$FREEZE" ]; then echo "::error::no freeze commit on this factory branch"; exit 1; fi
+          HASH=$(git log -1 --format='%(trailers:key=Contract-Root-Hash,valueonly)' "$FREEZE" | tr -d '[:space:]')
+          SPEC=$(git show --name-only --format= "$FREEZE" | grep 'manifest.lock.json$' | head -1 | xargs dirname)
+          echo "freeze=$FREEZE spec=$SPEC hash=$HASH"
+          factory-guard verify --spec-dir "$SPEC" --expected-hash "$HASH"
+          factory-guard diff --repo . --base "$FREEZE" --head HEAD

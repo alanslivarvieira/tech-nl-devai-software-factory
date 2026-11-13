@@ -1,0 +1,37 @@
+feature_id: personalised-greeting
+title: Personalised greeting
+summary: >-
+  Callers can pass an optional name to greet() and receive "Hello, <name>!". Surrounding whitespace is
+  trimmed; blank names are rejected with a clear error. Calling greet() without a name keeps working.
+repo:
+  url: examples/targets/python-greeter
+  base_branch: main
+stack: python
+engine: claude
+actors: [library user]
+scope_in:
+  - optional `name` parameter on greeter.greet
+  - trimming and blank-name validation
+scope_out:
+  - localisation of the greeting
+acceptance_criteria:
+  - id: AC-1
+    description: greet() without a name still returns "Hello, world!"
+  - id: AC-2
+    description: greet(name) returns "Hello, <name>!" with surrounding whitespace removed
+  - id: AC-3
+    description: a blank name (empty or only whitespace) raises ValueError("Name must not be entirely whitespace")
+interface:
+  kind: jsonl
+  command: ["{python}", "{spec_dir}/driver/driver.py"]
+  entrypoint_hint: "python module `greeter`, function greet(name: str | None = None) -> str"
+  ops:
+    - name: greet
+      description: call greeter.greet, passing `name` only when present
+      input: {name: "string, optional"}
+      output: {greeting: string}
+nfrs:
+  - no new runtime dependencies
+decisions:
+  - question: Should an empty string behave like no name?
+    answer: No — it is rejected like whitespace-only names.

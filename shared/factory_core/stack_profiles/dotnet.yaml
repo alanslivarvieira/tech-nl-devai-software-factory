@@ -1,0 +1,35 @@
+name: dotnet
+toolchain_hint: ".NET 8 SDK; xUnit/NUnit, coverlet, Stryker.NET (dotnet tool)"
+detect:
+  any_files: ["*.sln", "**/*.csproj", "**/*.fsproj"]
+  priority: 30
+src_globs: ["**/*.cs", "**/*.fs"]
+test_globs: ["**/*Tests/**", "**/*.Tests/**", "**/*Test/**", "tests/**", "test/**"]
+exclude_globs: [".factory/**", ".git/**", "**/bin/**", "**/obj/**"]
+guarded_files: ["stryker-config.json", "coverlet.runsettings", "*.runsettings", ".github/workflows/**", "CODEOWNERS"]
+guarded_line_patterns: ['Threshold', '<IsTestProject>']
+skip_markers: ['Skip\s*=', '\[Ignore', '\[Explicit']
+coverage_exclusions: ['ExcludeFromCodeCoverage']
+assertion_patterns: ['\bAssert\.', '\.Should\(']
+setup:
+  - argv: ["dotnet", "restore"]
+    needs: [dotnet]
+commands:
+  build:
+    argv: ["dotnet", "build", "--no-restore", "-warnaserror"]
+    needs: [dotnet]
+  unit:
+    argv: ["dotnet", "test", "--no-build", "--collect:XPlat Code Coverage", "--results-directory", "{out}/tr"]
+    needs: [dotnet]
+  diff_coverage:
+    argv: ["diff-cover", "glob:{out}/tr/**/coverage.cobertura.xml", "--compare-branch={base_sha}",
+           "--fail-under={diff_coverage_threshold}"]
+    needs: [diff-cover]
+  mutation:
+    - argv: ["dotnet", "stryker", "--reporter", "json", "--output", "{out}/stryker"]
+      needs: [dotnet]
+      skip_if_no_changed_src: true
+    - argv: ["{python}", "-m", "factory_core.mutation.score", "--stryker",
+             "glob:{out}/stryker/**/mutation-report.json", "--threshold", "{mutation_threshold}"]
+      skip_if_no_changed_src: true
+  regression: null

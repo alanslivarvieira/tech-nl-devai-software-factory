@@ -1,0 +1,53 @@
+# Local-first deployment.   cd langgraph-factory && docker compose up --build
+#   demo without any LLM:    FACTORY_FAKE_AGENT=greeter docker compose up --build
+#   with the Teams bot:      docker compose --profile teams up --build
+name: ai-software-factory
+
+services:
+  sandbox-image:            # builds the toolchain image the app (and per-call sandboxes) derive from
+    build: { context: .., dockerfile: langgraph-factory/sandbox/Dockerfile }
+    image: factory-sandbox:latest
+    command: ["true"]
+
+  db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: factory, POSTGRES_PASSWORD: factory, POSTGRES_DB: factory }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U factory"], interval: 3s, retries: 20 }
+
+  app:
+    build: { context: .., dockerfile: langgraph-factory/Dockerfile }
+    depends_on:
+      db: { condition: service_healthy }
+      sandbox-image: { condition: service_completed_successfully }
+    ports: ["8080:8080"]
+    environment:
+      DATABASE_URL: postgresql://factory:factory@db:5432/factory
+      FACTORY_FAKE_AGENT: ${FACTORY_FAKE_AGENT:-}
+      FACTORY_SANDBOX: ${FACTORY_SANDBOX:-local}       # "docker" = one container per agent call
+      FACTORY_NOTIFY_URL: ${FACTORY_NOTIFY_URL:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}                  # push branch + open PR on github.com
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - workspaces:/var/factory/workspaces
+      # - /var/run/docker.sock:/var/run/docker.sock    # needed for FACTORY_SANDBOX=docker
+
+  teams-bot:
+    profiles: ["teams"]
+    build: { context: .., dockerfile: langgraph-factory/Dockerfile }
+    command: ["factory-teams-bot"]
+    depends_on: [app]
+    ports: ["3978:3978"]
+    environment:
+      FACTORY_BACKEND: langgraph
+      FACTORY_API_URL: http://app:8080
+      BOT_PUBLIC_URL: ${BOT_PUBLIC_URL:-http://teams-bot:3978}
+      CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID: ${BOT_APP_ID:-}
+      CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET: ${BOT_APP_PASSWORD:-}
+      CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID: ${BOT_TENANT_ID:-}
+
+volumes:
+  pgdata: {}
+  workspaces: {}

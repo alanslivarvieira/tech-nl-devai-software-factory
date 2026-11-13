@@ -1,0 +1,57 @@
+name: python
+toolchain_hint: "Python 3.11+, pip; tests with pytest"
+detect:
+  any_files: ["pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt"]
+  priority: 50
+src_globs: ["**/*.py"]
+test_globs: ["tests/**", "test/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"]
+guarded_files: [".coveragerc", "pytest.ini", "tox.ini", "mutmut_config.py", ".github/workflows/**", "CODEOWNERS", ".github/CODEOWNERS"]
+guarded_line_patterns:
+  - 'fail[_-]under'
+  - '--cov-fail-under'
+  - '^\s*addopts\s*='
+  - '\[tool\.(coverage|pytest|mutmut)[^\]]*\]'
+  - 'filterwarnings'
+skip_markers:
+  - '@pytest\.mark\.skip'
+  - '@pytest\.mark\.xfail'
+  - 'pytest\.skip\('
+  - 'pytest\.xfail\('
+  - '@unittest\.skip'
+  - 'self\.skipTest\('
+  - 'pytest\.importorskip\('
+coverage_exclusions: ['pragma:\s*no\s*(cover|mutate)']
+assertion_patterns: ['\bassert\b', 'assert[A-Z]\w*\(', 'pytest\.raises\(']
+driver_template: drivers/driver_python.py
+setup:
+  - argv: ["{pip_install...}", "-q", "-e", "."]
+    required: false
+commands:
+  lint:
+    argv: ["ruff", "check", "--quiet", "{changed_src...}"]
+    required: false
+    needs: [ruff]
+    skip_if_no_changed_src: true
+  typecheck:
+    argv: ["mypy", "--ignore-missing-imports", "{changed_src...}"]
+    required: false
+    needs: [mypy]
+    skip_if_no_changed_src: true
+  build:
+    argv: ["{python}", "-m", "compileall", "-q", "{changed_src...}"]
+    skip_if_no_changed_src: true
+  unit:
+    argv: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml={out}/unit.xml",
+           "--cov={src_root}", "--cov-report=xml:{out}/coverage.xml"]
+    needs_modules: [pytest, pytest_cov]
+  diff_coverage:
+    argv: ["diff-cover", "{out}/coverage.xml", "--compare-branch={base_sha}",
+           "--fail-under={diff_coverage_threshold}"]
+    needs: [diff-cover]
+  mutation:
+    argv: ["{python}", "-m", "factory_core.mutation.pymut", "--threshold", "{mutation_threshold}",
+           "--max-mutants", "{max_mutants}", "--json", "{out}/mutation.json", "--diff-base", "{base_sha}",
+           "--tad-spec", "{spec_dir}", "--files", "{changed_src...}",
+           "--", "{python}", "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"]
+    skip_if_no_changed_src: true
+  regression: null   # `unit` already runs the whole suite for Python repos

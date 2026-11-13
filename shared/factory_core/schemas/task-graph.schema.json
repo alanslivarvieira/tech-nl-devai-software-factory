@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "Task": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "ac_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ac Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description"
+      ],
+      "title": "Task",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "items": {
+        "$ref": "#/$defs/Task"
+      },
+      "minItems": 1,
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tasks"
+  ],
+  "title": "TaskGraph",
+  "type": "object"
+}

@@ -1,0 +1,41 @@
+# CI for the factory itself.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages
+      - name: Lint
+        run: uv run ruff check shared langgraph-factory gh-aw-factory && uv run ruff format --check shared langgraph-factory gh-aw-factory
+      - name: Generated gh-aw workflows are up to date
+        run: python gh-aw-factory/scripts/gen_workflows.py && git diff --exit-code gh-aw-factory/.github/workflows
+      - name: Tests (unit, adversarial, Gherkin, property, mutation, end-to-end graph runs)
+        run: uv run pytest -q
+      - name: Mutation testing of the contract comparisons and the manifest (the factory dogfoods pymut)
+        working-directory: shared
+        run: >-
+          uv run python -m factory_core.mutation.pymut --threshold 60 --max-mutants 60
+          --files factory_core/tad_runner/compare.py factory_core/guard/manifest.py
+          -- uv run pytest -q -x -p no:cacheprovider tests/test_tad_runner.py tests/test_guard.py
+          -k "check or table or scenario or roundtrip or vocabulary or manifest or anchor or error_contains or key_order"
+  gh-aw-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh extension install github/gh-aw
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - name: Compile agentic workflows
+        working-directory: gh-aw-factory
+        run: gh aw compile --strict
+        env: { GH_TOKEN: "${{ github.token }}" }
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f langgraph-factory/docker-compose.yml config -q

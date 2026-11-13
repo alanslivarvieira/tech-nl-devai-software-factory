@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "AuditFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "enum": [
+            "blocking",
+            "warning"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "weak_assertion",
+            "mock_heavy",
+            "ac_gap",
+            "surviving_mutant",
+            "spec_contradiction",
+            "other"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "suggested_fix": {
+          "default": "",
+          "title": "Suggested Fix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "category",
+        "detail"
+      ],
+      "title": "AuditFinding",
+      "type": "object"
+    },
+    "GateResult": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "skip",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "details": {
+          "default": "",
+          "title": "Details",
+          "type": "string"
+        },
+        "duration_s": {
+          "default": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "failures": {
+          "description": "stable ids of failing items",
+          "items": {
+            "type": "string"
+          },
+          "title": "Failures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "title": "GateResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "feature_id": {
+      "title": "Feature Id",
+      "type": "string"
+    },
+    "iteration": {
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "commit": {
+      "title": "Commit",
+      "type": "string"
+    },
+    "gates": {
+      "items": {
+        "$ref": "#/$defs/GateResult"
+      },
+      "title": "Gates",
+      "type": "array"
+    },
+    "audit": {
+      "items": {
+        "$ref": "#/$defs/AuditFinding"
+      },
+      "title": "Audit",
+      "type": "array"
+    }
+  },
+  "required": [
+    "feature_id",
+    "iteration",
+    "commit",
+    "gates"
+  ],
+  "title": "VerificationReport",
+  "type": "object"
+}
