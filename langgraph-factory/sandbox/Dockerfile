@@ -2,7 +2,7 @@
 # (FACTORY_SANDBOX=docker). Add stacks you build for (JDK/Maven, .NET SDK, Go) as needed.
 FROM python:3.12-slim
 
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=24
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates gnupg \
  && curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \

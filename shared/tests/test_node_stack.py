@@ -40,6 +40,7 @@ def node_repo(tmp_path: Path):
     shutil.copytree(TARGET, repo)
     pipeline.git(repo, "init", "-q", "-b", "main")
     pipeline.commit_all(repo, "initial")
+    pipeline.git(repo, "checkout", "-q", "-b", "factory/test")
     files = {
         p.relative_to(SPEC).as_posix(): p.read_text(encoding="utf-8")
         for p in SPEC.rglob("*")

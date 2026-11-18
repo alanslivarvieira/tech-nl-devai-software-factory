@@ -155,6 +155,7 @@ class FactoryChat:
                         e.data.get("contract_markdown", ""),
                         e.data.get("summary") or e.message,
                         e.data.get("problems") or [],
+                        e.data.get("intent_markdown") or "",
                     )
                 )
             ]

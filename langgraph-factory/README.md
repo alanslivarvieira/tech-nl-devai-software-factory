@@ -17,6 +17,19 @@ Real coding agent on a real repo (needs `copilot`, `claude` or `codex` installed
 uv run factory-run --repo https://github.com/my-org/my-service.git --request "Add rate limiting to /orders" --engine claude
 ```
 
+Local git repository (e.g. a sibling `todo-app` checkout). The feature branch `factory/<key>` is
+pushed back into that repository and the PR body is written to `workspaces/<feature>/PR.md`:
+
+```bash
+uv run factory-run --repo ../todo-app --request "Add an optional due date to todos" --engine copilot
+```
+
+```bash
+git -C ../todo-app diff main...factory/<key>
+```
+
+A plain folder without `.git` is imported as a fresh repository; nothing is written back to it.
+
 Service (API on :8080, Postgres, optional Teams bot):
 
 ```bash
@@ -54,6 +67,8 @@ real PRs (otherwise the PR body is written to `workspaces/<feature>/PR.md`), and
 | `GITHUB_TOKEN` | — | push + open PRs on github.com |
 
 ## Code map
+
+See [docs/nodes.md](docs/nodes.md) for a per-node walkthrough, the graph diagram and where each node's prompt lives.
 
 `src/factory_app/graph/nodes.py` (all nodes), `graph/build.py` (wiring), `state.py` (FactoryState /
 VerifyState), `runtime.py` (threads + checkpointer), `api/server.py`, `cli.py`, `sandbox/`, `services.py`.

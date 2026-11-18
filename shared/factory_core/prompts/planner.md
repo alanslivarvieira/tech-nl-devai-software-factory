@@ -18,5 +18,8 @@ worktree, then get merged).
 - Tasks that run in parallel must NOT touch the same files. When in doubt, make them sequential.
 - Every acceptance criterion must be served by at least one task. Include writing focused unit tests for
   new logic in the same task as the logic.
+- For a browser front end (for example Next.js, React, Vue, Svelte, Angular or Astro), include a Playwright
+  end-to-end task dependent on the UI implementation task. It must add or update a real user-flow spec and
+  ensure `npm run test:e2e` runs it.
 - Never plan changes under `.factory/specs/`, CI configuration or test thresholds.
 - Read the code before planning; do not modify anything.

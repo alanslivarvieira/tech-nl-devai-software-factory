@@ -46,8 +46,9 @@ to read, review and protect from "make the tests pass by changing the tests". Se
 5. **Build** — fresh agent sessions implement tasks; the contract is read-only (OS bit / `:ro` mount /
    CLI deny rules) and every change goes through the **guard**.
 6. **Verify (clean context)** — fresh clone, fresh session, deterministic gates:
-   `integrity → setup → lint → typecheck → build → unit → diff_coverage → contract (CSV/YAML) →
-   acceptance (Gherkin) → property (Hypothesis) → mutation → regression → security`, then a **test auditor**
+   `integrity → setup → frontend_dependencies → lint → typecheck → build → unit → playwright →
+   diff_coverage → contract (CSV/YAML) → acceptance (Gherkin) → property (Hypothesis) → mutation → regression →
+   security`, then a **test auditor**
    agent that has never seen the build conversation.
 7. **Loop** — any failure goes back to a *fresh* builder with a bounded failure brief. It loops until green;
    a **stall breaker** (same failure fingerprint *N* times) asks the human: continue / amend the contract /

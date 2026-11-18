@@ -12,7 +12,9 @@ from factory_core.testing import greeter_draft, greeter_driver, make_greeter_rep
 
 @pytest.fixture
 def greeter_repo(tmp_path: Path) -> Path:
-    return make_greeter_repo(tmp_path / "repo")
+    repo = make_greeter_repo(tmp_path / "repo")
+    pipeline.git(repo, "checkout", "-q", "-b", "factory/test")
+    return repo
 
 
 @pytest.fixture

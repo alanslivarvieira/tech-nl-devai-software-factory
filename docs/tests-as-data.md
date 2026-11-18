@@ -7,6 +7,7 @@ it does not write tests in code at all).
 
 ```
 .factory/specs/<feature-id>/
+  intent.md             generated, human-readable view of the complete intent specification
   intent.yaml            problem, scope, acceptance criteria (AC-n), interface + ops, NFRs, grill decisions
   examples/<op>.csv      one row per case (tabular, Go-style)
   scenarios/<name>.yaml  multi-step / stateful cases (approved-scenario style)

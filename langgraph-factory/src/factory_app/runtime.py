@@ -17,7 +17,7 @@ from factory_core.agents import AgentRunner
 
 from .config import Settings
 from .graph import build_graph
-from .services import Services
+from .services import Services, normalize_repo_url
 
 RECURSION_LIMIT = 10_000  # the build⇄verify loop is intentionally unbounded; the stall breaker asks a human
 
@@ -94,7 +94,7 @@ class FactoryRuntime:
         state = {
             "feature_key": key,
             "request": request,
-            "repo_url": repo_url,
+            "repo_url": normalize_repo_url(repo_url),
             "base_branch": base_branch,
             "requester": requester,
             "engine": engine or self.settings.factory.default_engine,

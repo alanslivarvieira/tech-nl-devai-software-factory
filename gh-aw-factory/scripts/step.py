@@ -99,7 +99,7 @@ def main() -> int:
         if spec_dir.exists():
             pipeline.rmtree(spec_dir)
         pipeline.write_contract(TARGET, draft, load_profile(stack) if stack else None)
-        pipeline.commit_all(TARGET, f"factory: approved contract draft (#{n})")
+        pipeline.commit_all(TARGET, f"factory: approved contract draft (#{n})", require_factory_branch=True)
         push(TARGET, branch_for(n))
         set_body(
             repo,
@@ -145,7 +145,9 @@ def main() -> int:
             )
             return 1
         pipeline.git(TARGET, "apply", "--index", "--whitespace=nowarn", str(a.patch.resolve()))
-        pipeline.commit_all(TARGET, f"factory: {a.mode} changes (#{n}, iteration {issue.iteration})")
+        pipeline.commit_all(
+            TARGET, f"factory: {a.mode} changes (#{n}, iteration {issue.iteration})", require_factory_branch=True
+        )
         push(TARGET, branch_for(n))
         return 0
 

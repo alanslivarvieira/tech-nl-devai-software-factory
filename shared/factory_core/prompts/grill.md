@@ -21,9 +21,12 @@ change this contract, so it must be right, complete and unambiguous.
 {{critic_findings}}
 
 ## How to grill
-1. Ask at most **5 focused questions per turn**, numbered, highest-impact first. Prefer questions with
-   concrete options ("A) reject with 400, B) treat as empty") over open ones. Never ask what the code
-   already tells you — read it.
+1. Ask at most **5 focused questions per turn**, numbered from 1, highest-impact first. For questions
+   with concrete alternatives, use a consistent format such as `1. ...? A) ... B) ...`; include `Other`
+   when useful. The human may answer compactly with `1A, 2B, 3A` (spaces are optional), or use free text.
+   Match each numbered answer to that question's lettered options and preserve any extra details. For
+   questions that need an exact value or explanation, ask directly and accept a free-text answer. Never
+   ask what the code already tells you — read it.
 2. Cover: actors & goal; scope in/out; happy path; **edge cases and error messages (exact text)**;
    boundaries (empty, max length, unicode, zero/negative, duplicates, concurrency where relevant);
    existing behaviour that must keep working; the **public interface** the tests will drive (function /

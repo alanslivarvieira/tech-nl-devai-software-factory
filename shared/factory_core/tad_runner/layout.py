@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 INTENT = "intent.yaml"
+INTENT_MARKDOWN = "intent.md"
 EXAMPLES = "examples"
 SCENARIOS = "scenarios"
 PROPERTIES = "properties.yaml"
@@ -24,6 +25,10 @@ class SpecLayout:
     @property
     def intent(self) -> Path:
         return self.root / INTENT
+
+    @property
+    def intent_markdown(self) -> Path:
+        return self.root / INTENT_MARKDOWN
 
     @property
     def examples(self) -> Path:

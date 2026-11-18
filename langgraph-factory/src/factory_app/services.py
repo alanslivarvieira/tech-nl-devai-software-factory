@@ -65,7 +65,8 @@ class EventLog:
 
 
 class GitHost:
-    """Push the feature branch and open a PR; falls back to a local PR.md when no GitHub remote/token."""
+    """Push the feature branch and open a PR; for non-GitHub targets write a local PR.md (and push the branch
+    back into the source repo when it is a local git repository)."""
 
     def __init__(self, token: str | None, api: str) -> None:
         self.token, self.api = token, api
@@ -78,8 +79,13 @@ class GitHost:
     def open_pr(self, workdir: Path, repo_url: str, branch: str, base: str, title: str, body: str) -> str:
         slug = self.github_slug(repo_url)
         if not (slug and self.token):
+            header = f"# {title}\n\nbranch `{branch}` → `{base}`"
+            local = local_git_repo(repo_url)
+            if local is not None:
+                git(workdir, "push", "-q", str(local), f"HEAD:refs/heads/{branch}")
+                header += f"\n\nPushed to `{local}`. Review with `git -C \"{local}\" diff {base}...{branch}`."
             path = workdir.parent / "PR.md"
-            path.write_text(f"# {title}\n\nbranch `{branch}` → `{base}`\n\n{body}", encoding="utf-8")
+            path.write_text(f"{header}\n\n{body}", encoding="utf-8")
             return path.as_uri()
         git(workdir, "push", "-u", "origin", f"HEAD:refs/heads/{branch}")
         resp = httpx.post(
@@ -130,6 +136,17 @@ class Services:
         )
 
 
+def normalize_repo_url(repo_url: str) -> str:
+    """Make local paths absolute so later steps (clone, verify, PR) do not depend on the working directory."""
+    src = Path(repo_url)
+    return str(src.resolve()) if src.exists() else repo_url
+
+
+def local_git_repo(repo_url: str) -> Path | None:
+    src = Path(repo_url)
+    return src.resolve() if (src / ".git").exists() else None
+
+
 def clone(repo_url: str, dest: Path, base_branch: str) -> None:
     """Clone a git URL / local repo. A plain local folder (no .git) is imported as a fresh repository."""
     src = Path(repo_url)
@@ -141,5 +158,5 @@ def clone(repo_url: str, dest: Path, base_branch: str) -> None:
         git(dest, "add", "-A")
         git(dest, "commit", "-q", "-m", "import target folder")
         return
-    url = str(src.resolve()) if src.exists() else repo_url
+    url = normalize_repo_url(repo_url)
     subprocess.run(["git", "clone", "-q", "--branch", base_branch, url, str(dest)], check=True, capture_output=True)

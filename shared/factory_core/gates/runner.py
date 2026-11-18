@@ -14,6 +14,7 @@ import glob as globmod
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,10 +33,12 @@ from ..tad_runner.runner import run as tad_run
 GATE_ORDER = [
     "integrity",
     "setup",
+    "frontend_dependencies",
     "lint",
     "typecheck",
     "build",
     "unit",
+    "playwright",
     "diff_coverage",
     "contract",
     "acceptance",
@@ -57,6 +60,26 @@ SECURITY = [
     ),
 ]
 TAIL = 6000
+FRONTEND_PACKAGES = {
+    "@angular/core",
+    "@astrojs/renderer-react",
+    "@astrojs/renderer-vue",
+    "@remix-run/react",
+    "@sveltejs/kit",
+    "@vue/cli-service",
+    "astro",
+    "gatsby",
+    "next",
+    "nuxt",
+    "preact",
+    "react-dom",
+    "solid-js",
+    "vite",
+    "vue",
+}
+FRONTEND_CONFIGS = ("next.config.*", "vite.config.*", "astro.config.*", "nuxt.config.*", "postcss.config.*")
+CONFIG_IMPORT = re.compile(r"(?:require\s*\(\s*|from\s+|import\s*\(\s*)['\"]([^'\"]+)['\"]")
+CONFIG_PLUGIN_KEY = re.compile(r"['\"](@[\w.-]+/[\w./-]+)['\"]\s*:")
 
 
 @dataclass
@@ -292,6 +315,164 @@ def _tad_gate(name: str, kinds: list[str]) -> Callable[[GateContext], GateResult
     return gate
 
 
+def _package_manifest(repo: Path) -> dict[str, object] | None:
+    path = repo / "package.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _is_frontend(repo: Path, manifest: dict[str, object] | None = None) -> bool:
+    if any(any(repo.glob(pattern)) for pattern in FRONTEND_CONFIGS):
+        return True
+    manifest = manifest if manifest is not None else _package_manifest(repo)
+    if not manifest:
+        return False
+    dependencies = set()
+    for field in ("dependencies", "devDependencies", "peerDependencies"):
+        values = manifest.get(field)
+        if isinstance(values, dict):
+            dependencies.update(values)
+    return bool(dependencies & FRONTEND_PACKAGES)
+
+
+def gate_frontend_dependencies(ctx: GateContext) -> GateResult:
+    start = time.monotonic()
+    manifest = _package_manifest(ctx.repo)
+    if not _is_frontend(ctx.repo, manifest):
+        return GateResult(
+            name="frontend_dependencies",
+            status="skip",
+            required=False,
+            summary="not a detected front-end project",
+            duration_s=time.monotonic() - start,
+        )
+    if manifest is None:
+        return GateResult(
+            name="frontend_dependencies",
+            status="fail",
+            summary="front-end config is present but package.json is missing or invalid",
+            details="Add a valid package.json with direct dependencies for imported frontend plugins.",
+            failures=["invalid-package-json"],
+            duration_s=time.monotonic() - start,
+        )
+
+    dependencies: set[str] = set()
+    for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        values = manifest.get(field)
+        if isinstance(values, dict):
+            dependencies.update(values)
+    missing: set[str] = set()
+    for pattern in FRONTEND_CONFIGS:
+        for path in ctx.repo.glob(pattern):
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            names = CONFIG_IMPORT.findall(content) + CONFIG_PLUGIN_KEY.findall(content)
+            for name in names:
+                if name.startswith((".", "/", "node:")):
+                    continue
+                package = "/".join(name.split("/")[:2]) if name.startswith("@") else name.split("/", 1)[0]
+                if package not in dependencies:
+                    missing.add(f"{package} (referenced by {path.name})")
+    if missing:
+        items = sorted(missing)
+        return GateResult(
+            name="frontend_dependencies",
+            status="fail",
+            summary="frontend config references undeclared npm dependencies",
+            details="Add direct dependencies to package.json before relying on them:\n- " + "\n- ".join(items),
+            failures=[f"undeclared:{item.split(' ', 1)[0]}" for item in items],
+            duration_s=time.monotonic() - start,
+        )
+    return GateResult(
+        name="frontend_dependencies",
+        status="pass",
+        summary="frontend config dependencies are declared",
+        duration_s=time.monotonic() - start,
+    )
+
+
+def gate_playwright(ctx: GateContext) -> GateResult:
+    if not _is_frontend(ctx.repo):
+        return GateResult(name="playwright", status="skip", required=False, summary="not a detected front-end project")
+    manifest = _package_manifest(ctx.repo)
+    if manifest is None:
+        return GateResult(
+            name="playwright",
+            status="fail",
+            summary="front-end Playwright tests require a valid package.json",
+            failures=["invalid-package-json"],
+        )
+
+    dependencies: set[str] = set()
+    for field in ("dependencies", "devDependencies"):
+        values = manifest.get(field)
+        if isinstance(values, dict):
+            dependencies.update(values)
+    scripts = manifest.get("scripts")
+    scripts = scripts if isinstance(scripts, dict) else {}
+    problems = []
+    if not dependencies & {"@playwright/test", "playwright"}:
+        problems.append("add @playwright/test as a direct devDependency")
+    if not any(any(ctx.repo.glob(f"playwright.config.{ext}")) for ext in ("ts", "js", "mjs", "cjs")):
+        problems.append("add playwright.config.ts (or .js/.mjs/.cjs)")
+    e2e_script = scripts.get("test:e2e", "")
+    if not isinstance(e2e_script, str) or "playwright" not in e2e_script.lower():
+        problems.append("add a test:e2e npm script that runs playwright test")
+    has_playwright_test = False
+    for root_name in ("e2e", "tests", "test"):
+        root = ctx.repo / root_name
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or ".spec." not in path.name and ".e2e." not in path.name:
+                continue
+            if {"node_modules", ".next", "dist", "coverage"} & set(path.relative_to(ctx.repo).parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if "@playwright/test" in content or "playwright/test" in content:
+                has_playwright_test = True
+                break
+        if has_playwright_test:
+            break
+    if not has_playwright_test:
+        problems.append("add at least one Playwright spec under e2e/ or tests/ (for example tests/e2e/home.spec.ts)")
+    if problems:
+        return GateResult(
+            name="playwright",
+            status="fail",
+            summary="front-end changes require runnable Playwright end-to-end tests",
+            details="\n".join(f"- {problem}" for problem in problems),
+            failures=["playwright-setup"],
+        )
+
+    return _run_commands(
+        ctx,
+        "playwright",
+        [
+            Command(
+                argv=["npx", "--no-install", "playwright", "install", "chromium"],
+                needs=["npx"],
+                timeout_s=ctx.config.gate_timeout_s,
+            ),
+            Command(
+                argv=["npm", "run", "test:e2e"],
+                needs=["npm"],
+                timeout_s=ctx.config.gate_timeout_s,
+            ),
+        ],
+    )
+
+
 def run_gates(ctx: GateContext, only: list[str] | None = None) -> list[GateResult]:
     results: list[GateResult] = []
     for name in GATE_ORDER:
@@ -302,6 +483,10 @@ def run_gates(ctx: GateContext, only: list[str] | None = None) -> list[GateResul
         elif name == "setup":
             if ctx.config.run_setup and ctx.profile.setup:
                 results.append(_run_commands(ctx, "setup", ctx.profile.setup))
+        elif name == "frontend_dependencies":
+            results.append(gate_frontend_dependencies(ctx))
+        elif name == "playwright":
+            results.append(gate_playwright(ctx))
         elif name == "contract":
             results.append(_tad_gate("contract", ["table", "scenario"])(ctx))
         elif name == "acceptance":

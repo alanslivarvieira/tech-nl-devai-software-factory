@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
             p.relative_to(a.spec_dir).as_posix(): p.read_text(encoding="utf-8")
             for p in sorted(a.spec_dir.rglob("*"))
             if p.is_file()
-            and p.relative_to(a.spec_dir).parts[0] in ("intent.yaml", "examples", "scenarios", "properties.yaml")
+            and p.relative_to(a.spec_dir).parts[0]
+            in ("intent.md", "intent.yaml", "examples", "scenarios", "properties.yaml")
         }
         print(render_markdown(files))
         return 0

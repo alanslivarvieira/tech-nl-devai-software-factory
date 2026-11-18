@@ -13,7 +13,7 @@ from .guard import lock
 from .models import IntentSpec, SpecDraft, Task, VerificationReport
 from .reports import failure_brief, report_markdown
 from .resources import render_prompt
-from .spec import intent_yaml, write_draft
+from .spec import intent_markdown, intent_yaml, write_draft
 from .stack import StackProfile
 from .tad_runner.layout import SPECS_ROOT, SpecLayout
 from .tad_runner.runner import freeze_check, validate
@@ -53,7 +53,11 @@ def head(repo: Path) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-def commit_all(repo: Path, message: str) -> str:
+def commit_all(repo: Path, message: str, *, require_factory_branch: bool = False) -> str:
+    if require_factory_branch:
+        branch = git(repo, "branch", "--show-current")
+        if not branch.startswith(("factory/", "factory-task/")):
+            raise RuntimeError(f"refusing factory commit on non-feature branch {branch!r}")
     git(repo, "add", "-A")
     if git(repo, "status", "--porcelain"):
         git(repo, "commit", "-q", "-m", message)
@@ -150,11 +154,13 @@ def freeze(repo: Path, layout: SpecLayout, approver: str) -> FreezeResult:
     if intent.approved_by != approver:
         intent.approved_by = approver
         layout.intent.write_text(intent_yaml(intent), encoding="utf-8", newline="\n")
+        layout.intent_markdown.write_text(intent_markdown(intent), encoding="utf-8", newline="\n")
     manifest = lock(layout.root, intent.feature_id, approver)
     sha = commit_all(
         repo,
         f"factory: freeze contract {intent.feature_id}\n\nApproved-by: {approver}\n"
         f"Contract-Root-Hash: {manifest['root_hash']}",
+        require_factory_branch=True,
     )
     return FreezeResult(ok=True, root_hash=manifest["root_hash"], freeze_sha=sha)
 

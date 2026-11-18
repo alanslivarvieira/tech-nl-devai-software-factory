@@ -110,7 +110,9 @@ def test_markdown_roundtrip():
     assert parse_markdown(md) == {k: v if v.endswith("\n") else v + "\n" for k, v in files.items()}
     draft = files_to_draft(parse_markdown(md))
     assert draft.intent.feature_id == "personalised-greeting"
-    assert set(draft_to_files(draft)) == set(files)
+    rendered_files = draft_to_files(draft)
+    assert set(rendered_files) == set(files) | {"intent.md"}
+    assert "<summary>Complete machine-readable specification</summary>" in rendered_files["intent.md"]
 
 
 def test_draft_rejects_path_traversal():

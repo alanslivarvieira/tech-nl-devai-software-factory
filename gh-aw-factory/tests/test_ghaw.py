@@ -257,6 +257,7 @@ def test_context_renders_grill_and_build_prompts(tmp_path):
     from factory_core.testing import greeter_draft, greeter_driver, make_greeter_repo
 
     target = make_greeter_repo(tmp_path / "target")
+    pipeline.git(target, "checkout", "-q", "-b", "factory/test")
     grill = context.render(
         "grill", issue(comments=[Comment("alan", "MEMBER", "trim please")]), target, "acme/hub", False
     )
@@ -265,6 +266,7 @@ def test_context_renders_grill_and_build_prompts(tmp_path):
     layout = pipeline.write_contract(target, greeter_draft(), load_profile("python"))
     (layout.driver / "driver.py").write_text(greeter_driver(), encoding="utf-8")
     res = pipeline.freeze(target, layout, "alan")
+    assert "approved_by: alan" in layout.intent_markdown.read_text(encoding="utf-8")
     plan = Comment(
         BOT,
         "NONE",

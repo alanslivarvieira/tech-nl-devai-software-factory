@@ -45,11 +45,12 @@ commands:
            "--fail-under={diff_coverage_threshold}"]
     needs: [diff-cover]
   mutation:
+    # Stryker's CLI has no flag for the JSON report path; it always writes reports/mutation/mutation.json.
     - argv: ["npx", "--yes", "@stryker-mutator/core", "run", "--mutate", "{changed_src_csv}",
-             "--testRunner", "command", "--reporters", "json", "--jsonReporter.fileName", "{out}/mutation.json"]
+             "--testRunner", "command", "--reporters", "json"]
       needs: [npx]
       skip_if_no_changed_src: true
-    - argv: ["{python}", "-m", "factory_core.mutation.score", "--stryker", "{out}/mutation.json",
+    - argv: ["{python}", "-m", "factory_core.mutation.score", "--stryker", "reports/mutation/mutation.json",
              "--threshold", "{mutation_threshold}"]
       skip_if_no_changed_src: true
   regression: null

@@ -73,7 +73,14 @@ def test_chat_renders_events_and_finishes():
     chat.handle("c", "u", text="/new acme/shop add greeting")
     be.queue = [
         FactoryEvent("questions", "q", {"questions": ["1. trim?"]}),
-        FactoryEvent("approval_needed", "draft", {"contract_markdown": "```csv file=examples/a.csv\nx\n```"}),
+        FactoryEvent(
+            "approval_needed",
+            "draft",
+            {
+                "contract_markdown": "```csv file=examples/a.csv\nx\n```",
+                "intent_markdown": "# Intent\n\n## Scope\n\n- Add greetings\n\n<details>hidden</details>",
+            },
+        ),
         FactoryEvent("escalation", "stuck", {"reason": "same failures"}),
         FactoryEvent("pr_opened", "done", {"pr_url": "https://github.com/acme/shop/pull/1"}),
     ]
@@ -82,6 +89,8 @@ def test_chat_renders_events_and_finishes():
     assert (
         replies[1].card
         and "examples/a.csv" in card_to_text(replies[1].card)
+        and "Add greetings" in card_to_text(replies[1].card)
+        and "hidden" not in card_to_text(replies[1].card)
         and "/approve" in card_to_text(replies[1].card)
     )
     assert replies[2].card and "/continue" in card_to_text(replies[2].card)

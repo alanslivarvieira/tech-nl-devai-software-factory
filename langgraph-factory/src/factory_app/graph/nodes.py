@@ -34,6 +34,14 @@ def _report(state: FactoryState) -> VerificationReport | None:
     return VerificationReport.model_validate(raw) if raw else None
 
 
+def _number_questions(questions: list[str]) -> list[str]:
+    numbered = []
+    for index, question in enumerate(questions, start=1):
+        text = re.sub(r"^\s*\d+[.)]\s*", "", question).strip()
+        numbered.append(f"{index}. {text}")
+    return numbered
+
+
 class Nodes:
     def __init__(self, services: Services) -> None:
         self.s = services
@@ -108,10 +116,11 @@ class Nodes:
             return {"pending": pending, "draft": None}
         turn: GrillTurn = res.data
         if turn.status == "questions":
-            text = "\n".join(turn.questions)
-            self._emit(state, "questions", text, questions=turn.questions, notes=turn.notes)
+            questions = _number_questions(turn.questions)
+            text = "\n".join(questions)
+            self._emit(state, "questions", text, questions=questions, notes=turn.notes)
             return {
-                "pending": {"type": "questions", "questions": turn.questions, "notes": turn.notes},
+                "pending": {"type": "questions", "questions": questions, "notes": turn.notes},
                 "draft": None,
                 "critic_findings": [],
                 "status": "grilling",
@@ -125,11 +134,18 @@ class Nodes:
                 state, "critic", f"Spec critic found {len(problems)} issue(s); revising draft", problems=problems
             )
             return {"pending": None, "draft": None, "critic_findings": problems, "critic_rounds": rounds + 1}
-        markdown = render_markdown(draft_to_files(turn.draft))
+        files = draft_to_files(turn.draft)
+        intent_preview = files.pop("intent.md")
+        layout = SpecLayout(Path(state["workdir"]) / pipeline.spec_rel(turn.draft.intent.feature_id))
+        layout.intent_markdown.parent.mkdir(parents=True, exist_ok=True)
+        layout.intent_markdown.write_text(intent_preview, encoding="utf-8", newline="\n")
+        markdown = render_markdown(files)
         pending = {
             "type": "approval",
             "summary": turn.notes,
             "contract_markdown": markdown,
+            "intent_markdown": intent_preview,
+            "intent_path": str(layout.intent_markdown),
             "problems": problems,
             "engine": turn.draft.intent.engine,
             "engine_recommendation": turn.engine_recommendation,
@@ -192,7 +208,7 @@ class Nodes:
                 )
             protected = [
                 f"{pipeline.spec_rel(draft.intent.feature_id)}/{p}"
-                for p in ("intent.yaml", "examples/**", "scenarios/**", "properties.yaml", "features/**")
+                for p in ("intent.yaml", "intent.md", "examples/**", "scenarios/**", "properties.yaml", "features/**")
             ]
             self.s.agent(engine).run(
                 AgentRequest(role="driver_writer", prompt=prompt, workdir=workdir, protected=protected)
@@ -303,7 +319,7 @@ class Nodes:
         res = self.s.agent(payload["engine"]).run(
             AgentRequest(role="builder", prompt=prompt, workdir=wt, protected=payload["protected"])
         )
-        sha = pipeline.commit_all(wt, f"factory: {task.title}\n\nTask: {task.id}")
+        sha = pipeline.commit_all(wt, f"factory: {task.title}\n\nTask: {task.id}", require_factory_branch=True)
         return {
             "task_results": [
                 {

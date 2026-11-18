@@ -30,6 +30,16 @@ def _guard(repo: Path, base: str):
     return check_changes(from_git(repo, base, "HEAD"), PY)
 
 
+def test_factory_commit_requires_feature_branch(tmp_path: Path):
+    pipeline.git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "change.txt").write_text("change", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="non-feature branch 'main'"):
+        pipeline.commit_all(tmp_path, "factory change", require_factory_branch=True)
+
+    pipeline.git(tmp_path, "checkout", "-q", "-b", "factory/test")
+    assert pipeline.commit_all(tmp_path, "factory change", require_factory_branch=True)
+
+
 SPEC = ".factory/specs/personalised-greeting"
 
 CHEATS = {

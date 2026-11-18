@@ -17,7 +17,9 @@ def _blocks(contract_markdown: str, limit: int = 6000) -> list[dict[str, Any]]:
     return items or [{"type": "TextBlock", "text": contract_markdown[:limit], "wrap": True}]
 
 
-def approval_card(contract_markdown: str, summary: str, problems: list[str]) -> dict[str, Any]:
+def approval_card(
+    contract_markdown: str, summary: str, problems: list[str], intent_preview: str = ""
+) -> dict[str, Any]:
     body: list[dict[str, Any]] = [
         {"type": "TextBlock", "text": "📜 Draft contract — tests as data", "weight": "Bolder", "size": "Large"},
         {
@@ -28,6 +30,10 @@ def approval_card(contract_markdown: str, summary: str, problems: list[str]) -> 
             "wrap": True,
         },
     ]
+    if intent_preview:
+        readable_intent = intent_preview.split("<details>", 1)[0]
+        readable_intent = re.sub(r"^#{1,3} (.+)$", r"**\1**", readable_intent, flags=re.M)
+        body.append({"type": "TextBlock", "text": readable_intent[:6000], "wrap": True})
     if problems:
         body.append(
             {
