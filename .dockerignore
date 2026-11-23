@@ -1,0 +1,2 @@
+# APM's download cache; the deployed skills under factory-skills/.agents and .claude are what the image needs.
+factory-skills/apm_modules/

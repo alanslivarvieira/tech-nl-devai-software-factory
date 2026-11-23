@@ -67,6 +67,15 @@ def test_chat_parses_requests_and_commands(tmp_path):
     assert FactoryChat(be, store_path=tmp_path / "store.json").conv("c1").feature == "feat-1"
 
 
+def test_structured_grill_round_tells_the_human_how_to_answer():
+    plain = FactoryChat.render(FactoryEvent("questions", "q", {"questions": ["1. trim?"]}))[0].text
+    rnd = FactoryChat.render(
+        FactoryEvent("questions", "q", {"questions": ["1. a", "2. b"], "question_items": [{}, {}]})
+    )[0].text
+    assert "Reply `yes`" not in plain
+    assert "1. a\n\n2. b" in rnd and "Reply `yes` to accept my recommendations" in rnd
+
+
 def test_chat_renders_events_and_finishes():
     be = FakeBackend()
     chat = FactoryChat(be)

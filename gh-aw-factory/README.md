@@ -49,4 +49,10 @@ audit → pr → done`. On escalation reply `/continue`, `/amend <change>` or `/
   `network`) follows the gh-aw documentation at the time of writing; `gh aw compile --strict` is the source of
   truth — fix any reported keys there.
 - The orchestrator dispatches with the App token so that chained `workflow_run` events fire.
+- Agent skills: each agentic workflow runs `python -m factory_core.skills deploy .` (from the APM-pinned
+  [factory-skills/](../factory-skills/README.md)) before the agent starts. Grill uses `grilling` (grill-me),
+  plan uses `writing-plans`, build runs the whole plan in one session with `executing-plans` +
+  `test-driven-development` and a `requesting-code-review` self-review, and audit is the whole-branch review.
+  Unlike the LangGraph factory there is no per-task review phase and no `finish` phase; `open-pr` stays
+  deterministic.
 - Unit tests for the orchestrator, issue helpers, workflow generation and prompt rendering: `gh-aw-factory/tests`.

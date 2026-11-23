@@ -16,8 +16,8 @@ from pathlib import Path
 
 from .base import AgentRequest, AgentResult, AgentRunner, Executor, LocalExecutor, ensure_run_dir
 
-READ_TOOLS = "Read,Glob,Grep"
-WRITE_TOOLS = "Read,Glob,Grep,Edit,MultiEdit,Write,Bash"
+READ_TOOLS = "Read,Glob,Grep,Skill"
+WRITE_TOOLS = "Read,Glob,Grep,Edit,MultiEdit,Write,Bash,Skill"
 
 
 class CliAgentRunner(AgentRunner):

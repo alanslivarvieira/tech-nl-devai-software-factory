@@ -15,6 +15,7 @@ from factory_core.agents import AgentRequest, ClaudeCodeRunner, CodexRunner, Cop
 from factory_core.agents.base import extract_json, read_only
 from factory_core.models import GateResult, GrillTurn, TaskGraph, VerificationReport
 from factory_core.mutation.pymut import enumerate_mutants, mutated_source
+from factory_core.skills import deploy_skills
 from factory_core.spec import DraftError, draft_to_files, files_to_draft, parse_markdown, render_markdown
 from factory_core.stack import all_profiles, detect_stack, glob_match
 from factory_core.testing import greeter_draft, greeter_spec_files
@@ -49,6 +50,72 @@ def test_grill_turn_consistency():
     with pytest.raises(ValueError):
         GrillTurn(status="draft")
     assert GrillTurn(status="questions", questions=["?"]).status == "questions"
+
+
+def test_grill_questions_are_structured_rounds_with_recommendations():
+    turn = GrillTurn(
+        status="questions",
+        questions=[
+            "Trim the name?",
+            {
+                "title": "Blank names",
+                "body": "Reject or fall back?",
+                "options": [{"key": "A", "label": "reject"}, {"key": "B", "label": "fall back"}],
+                "recommendation": "A, with `name must not be blank`",
+            },
+        ],
+    )
+    assert turn.questions[0].body == "Trim the name?" and turn.questions[0].render(1) == "1. **Q1** - Trim the name?"
+    assert turn.questions[1].render(2).splitlines() == [
+        "2. **Q2** - **Blank names**: Reject or fall back?",
+        "   A) reject",
+        "   B) fall back",
+        "   ➡️ Recommended: A, with `name must not be blank`",
+    ]
+
+
+# ----------------------------------------------------------------------------------------------- skills
+def _git(repo: Path, *args: str) -> str:
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    return subprocess.run(["git", *ident, *args], cwd=repo, check=True, capture_output=True, text=True).stdout
+
+
+def test_deploy_skills_is_excluded_idempotent_and_keeps_repo_owned_skills(tmp_path, monkeypatch):
+    src = tmp_path / "factory-skills"
+    for root in (".agents/skills", ".claude/skills"):
+        for name in ("grilling", "test-driven-development"):
+            (src / root / name).mkdir(parents=True)
+            (src / root / name / "SKILL.md").write_text(f"---\nname: {name}\n---\nv1\n", encoding="utf-8")
+    repo = tmp_path / "repo"
+    (repo / ".claude/skills/grilling").mkdir(parents=True)
+    (repo / ".claude/skills/grilling/SKILL.md").write_text("the repo's own skill", encoding="utf-8")
+    _git(tmp_path, "init", "-q", "-b", "main", str(repo))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+
+    deployed = deploy_skills(repo, src)
+    assert ".claude/skills/grilling" not in deployed
+    assert (repo / ".claude/skills/grilling/SKILL.md").read_text(encoding="utf-8") == "the repo's own skill"
+    assert set(deployed) == {
+        ".agents/skills/grilling",
+        ".agents/skills/test-driven-development",
+        ".claude/skills/test-driven-development",
+    }
+    assert _git(repo, "status", "--porcelain") == "", "deployed skills are never committed"
+    assert deploy_skills(repo, src) == deployed
+
+    (src / ".agents/skills/grilling/SKILL.md").write_text("v2", encoding="utf-8")
+    deploy_skills(repo, src)
+    assert (repo / ".agents/skills/grilling/SKILL.md").read_text(encoding="utf-8") == "v2"
+
+    _git(repo, "worktree", "add", "-q", "-b", "factory-task/x", str(tmp_path / "wt"), "HEAD")
+    deploy_skills(tmp_path / "wt", src)
+    assert _git(tmp_path / "wt", "status", "--porcelain") == ""
+
+    monkeypatch.setenv("FACTORY_SKILLS_DIR", str(src))
+    agent = FakeAgentRunner({"builder": lambda req: "done"})
+    agent.run(AgentRequest(role="builder", prompt="p", workdir=repo, protected=[".factory/specs/**"]))
+    assert agent.calls[0].protected == [".factory/specs/**", *(f"{d}/**" for d in deployed)]
 
 
 def test_report_fingerprint_is_stable_and_specific():

@@ -110,14 +110,42 @@ class SpecDraft(_Model):
     properties: str | None = Field(default=None, description="properties.yaml text")
 
 
+class GrillOption(_Model):
+    key: str = Field(description="Short letter the human can answer with, e.g. 'A'")
+    label: str
+
+
+class GrillQuestion(_Model):
+    """One question of a grilling round (Matt Pocock's ``grilling`` skill): the human may answer `yes` to accept
+    the recommendation, pick an option compactly (``1A, 2B``) or answer in free text."""
+
+    title: str = ""
+    body: str
+    options: list[GrillOption] = Field(default_factory=list)
+    recommendation: str = Field(default="", description="Your recommended answer and why")
+
+    def render(self, number: int) -> str:
+        head = f"**Q{number}** - **{self.title}**: {self.body}" if self.title else f"**Q{number}** - {self.body}"
+        lines = [f"{number}. {head}"]
+        lines += [f"   {o.key}) {o.label}" for o in self.options]
+        if self.recommendation:
+            lines.append(f"   ➡️ Recommended: {self.recommendation}")
+        return "\n".join(lines)
+
+
 class GrillTurn(_Model):
-    """Structured output of one grill-agent turn."""
+    """Structured output of one grill-agent turn (one grilling round)."""
 
     status: Literal["questions", "draft"]
-    questions: list[str] = Field(default_factory=list)
+    questions: list[GrillQuestion] = Field(default_factory=list)
     engine_recommendation: Engine | None = None
     draft: SpecDraft | None = None
     notes: str = ""
+
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _plain_questions(cls, v: Any) -> Any:
+        return [{"body": q} if isinstance(q, str) else q for q in v] if isinstance(v, list) else v
 
     @model_validator(mode="after")
     def _consistent(self) -> GrillTurn:
@@ -140,6 +168,11 @@ class Task(_Model):
     depends_on: list[str] = Field(default_factory=list)
     files: list[str] = Field(default_factory=list)
     ac_ids: list[str] = Field(default_factory=list)
+    plan: str = Field(
+        default="",
+        description="Task brief in superpowers writing-plans format (markdown): files, interfaces and "
+        "bite-sized RED/GREEN steps with exact commands and expected output",
+    )
 
 
 class TaskGraph(_Model):
@@ -201,7 +234,9 @@ class GateResult(_Model):
 
 class AuditFinding(_Model):
     severity: Literal["blocking", "warning"]
-    category: Literal["weak_assertion", "mock_heavy", "ac_gap", "surviving_mutant", "spec_contradiction", "other"]
+    category: Literal[
+        "weak_assertion", "mock_heavy", "ac_gap", "surviving_mutant", "spec_contradiction", "code_quality", "other"
+    ]
     detail: str
     file: str | None = None
     suggested_fix: str = ""
@@ -245,6 +280,7 @@ class FactoryConfig(_Model):
     max_mutants: int = 150
     stall_limit: int = 3
     max_iterations: int = 0  # 0 = unbounded ("always loop"); the stall breaker still asks a human
+    review_rounds: int = 2  # per-task review → fix passes (superpowers task review); 0 disables the task review
     gate_timeout_s: int = 900
     default_engine: Engine = "copilot"
     run_setup: bool = True
@@ -252,3 +288,33 @@ class FactoryConfig(_Model):
 
 class AuditResult(_Model):
     findings: list[AuditFinding] = Field(default_factory=list)
+
+
+class ReviewFinding(_Model):
+    severity: Literal["critical", "important", "minor"]
+    kind: Literal["spec_compliance", "code_quality", "testing"] = "code_quality"
+    detail: str
+    file: str | None = Field(default=None, description="path[:line]")
+    suggested_fix: str = ""
+
+
+class ReviewResult(_Model):
+    """Per-task review (superpowers subagent-driven-development task reviewer: spec compliance + quality)."""
+
+    spec_compliant: bool = True
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    summary: str = ""
+
+    @property
+    def needs_fixes(self) -> bool:
+        return any(f.severity in ("critical", "important") for f in self.findings)
+
+
+class FinishResult(_Model):
+    """Outcome of superpowers finishing-a-development-branch with the choice fixed to 'push and create a PR'."""
+
+    tests_passed: bool
+    test_command: str = ""
+    test_summary: str = ""
+    pr_title: str = ""
+    pr_summary: str = Field(default="", description="Markdown PR description written for reviewers")

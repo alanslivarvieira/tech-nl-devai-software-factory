@@ -1,8 +1,9 @@
 """Graph wiring.
 
 intake → recon → grill_turn ⇄ ask_human (interrupt) → freeze → plan → schedule
-schedule ─Send→ worker* → integrate → schedule … → verify (clean-context subgraph) → triage
-triage → pr | schedule (fix round) | escalate (interrupt) → schedule | grill_turn (amend) | END
+schedule ─Send→ worker* (task subgraph: implement → review ⇄ fix) → integrate → schedule …
+→ verify (clean-context subgraph) → triage
+triage → finish → pr | schedule (fix round) | escalate (interrupt) → schedule | grill_turn (amend) | END
 """
 
 from __future__ import annotations
@@ -13,8 +14,18 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from ..services import Services
-from ..state import FactoryState, VerifyState
+from ..state import FactoryState, TaskState, VerifyState
 from .nodes import Nodes
+
+
+def build_task_graph(nodes: Nodes) -> Any:
+    g = StateGraph(TaskState)
+    g.add_node("implement", nodes.t_implement)
+    g.add_node("review", nodes.t_review)
+    g.add_edge(START, "implement")
+    g.add_edge("implement", "review")
+    g.add_conditional_edges("review", nodes.route_review, {"implement": "implement", "done": END})
+    return g.compile()
 
 
 def build_verify_graph(nodes: Nodes) -> Any:
@@ -32,6 +43,7 @@ def build_verify_graph(nodes: Nodes) -> Any:
 def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = None) -> Any:
     nodes = Nodes(services)
     nodes.verify_graph = build_verify_graph(nodes)  # type: ignore[attr-defined]
+    nodes.task_graph = build_task_graph(nodes)  # type: ignore[attr-defined]
 
     g = StateGraph(FactoryState)
     for name in (
@@ -47,6 +59,7 @@ def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = N
         "verify",
         "triage",
         "escalate",
+        "finish",
         "pr",
     ):
         g.add_node(name, getattr(nodes, name))
@@ -68,7 +81,8 @@ def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = N
     g.add_edge("worker", "integrate")
     g.add_edge("integrate", "schedule")
     g.add_edge("verify", "triage")
-    g.add_conditional_edges("triage", nodes.route_triage, ["pr", "schedule", "escalate"])
+    g.add_conditional_edges("triage", nodes.route_triage, ["finish", "schedule", "escalate"])
+    g.add_conditional_edges("finish", nodes.route_finish, ["pr", "escalate"])
     g.add_conditional_edges(
         "escalate", nodes.route_escalate, {"end": END, "grill_turn": "grill_turn", "schedule": "schedule"}
     )

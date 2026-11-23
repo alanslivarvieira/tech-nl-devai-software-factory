@@ -18,6 +18,7 @@
             "ac_gap",
             "surviving_mutant",
             "spec_contradiction",
+            "code_quality",
             "other"
           ],
           "title": "Category",

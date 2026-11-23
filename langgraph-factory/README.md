@@ -63,6 +63,7 @@ real PRs (otherwise the PR body is written to `workspaces/<feature>/PR.md`), and
 | `FACTORY_CONFIG` | — | YAML thresholds, see `factory.example.yaml` |
 | `FACTORY_SANDBOX` / `FACTORY_SANDBOX_IMAGE` | `local` / `factory-sandbox:latest` | where agent CLIs run |
 | `FACTORY_<ENGINE>_BIN` / `FACTORY_<ENGINE>_ARGS` | — | override CLI binary / extra flags (e.g. `--model`) |
+| `FACTORY_SKILLS_DIR` | `../factory-skills` (source checkout) | APM-installed agent skills copied into every agent workdir |
 | `FACTORY_NOTIFY_URL` | — | webhook for every event |
 | `GITHUB_TOKEN` | — | push + open PRs on github.com |
 
@@ -71,6 +72,7 @@ real PRs (otherwise the PR body is written to `workspaces/<feature>/PR.md`), and
 See [docs/nodes.md](docs/nodes.md) for a per-node walkthrough, the graph diagram and where each node's prompt lives.
 
 `src/factory_app/graph/nodes.py` (all nodes), `graph/build.py` (wiring), `state.py` (FactoryState /
-VerifyState), `runtime.py` (threads + checkpointer), `api/server.py`, `cli.py`, `sandbox/`, `services.py`.
+TaskState / VerifyState), `runtime.py` (threads + checkpointer), `api/server.py`, `cli.py`, `sandbox/`, `services.py`.
 Tests: `tests/test_graph.py` (happy path with a failing first iteration, clean-context assertions, cheating
-builder caught by the guard, stall breaker + continue/abort, API round trip).
+builder caught by the guard, stall breaker + continue/abort, task review → fix loop, finish escalation, API
+round trip).

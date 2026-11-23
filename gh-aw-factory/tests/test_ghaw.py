@@ -285,3 +285,7 @@ def test_context_renders_grill_and_build_prompts(tmp_path):
     build = context.render("build", i, target, "acme/hub", False)
     assert "1. **Impl**" in build and "2. **Tests**" in build and ".factory/specs/" in build
     assert "Previous verification failed" not in build
+    assert "`executing-plans`" in build and "`test-driven-development`" in build
+    plan_prompt = context.render("plan", i, target, "acme/hub", False)
+    assert "`writing-plans`" in plan_prompt and "factory_core.tad_runner.cli run" in plan_prompt
+    assert "python -m factory_core.skills deploy ." in gen_workflows.render("build", "claude")

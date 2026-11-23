@@ -107,9 +107,18 @@ def greeter_fake_agent(buggy_first: bool = True) -> FakeAgentRunner:
         return {
             "status": "questions",
             "questions": [
-                "1. Should surrounding whitespace in the name be trimmed? (A) yes (B) no",
-                "2. What should happen for a blank name — reject with an error or fall back to 'world'?",
-                "3. Which coding agent should build it: copilot, claude or codex?",
+                {
+                    "title": "Trimming",
+                    "body": "Should surrounding whitespace in the name be trimmed?",
+                    "options": [{"key": "A", "label": "yes"}, {"key": "B", "label": "no"}],
+                    "recommendation": "A — users rarely mean leading/trailing spaces",
+                },
+                {
+                    "title": "Blank names",
+                    "body": "What should happen for a blank name — reject with an error or fall back to 'world'?",
+                    "recommendation": "reject with `name must not be blank`",
+                },
+                "Which coding agent should build it: copilot, claude or codex?",
             ],
         }
 
@@ -135,6 +144,9 @@ def greeter_fake_agent(buggy_first: bool = True) -> FakeAgentRunner:
                     "description": "Add optional name with trimming and blank-name validation to greeter.greet",
                     "files": ["src/greeter/__init__.py"],
                     "ac_ids": ["AC-1", "AC-2", "AC-3"],
+                    "plan": "- [ ] Step 1: write the failing test for `greet(' Ada ')`\n"
+                    "- [ ] Step 2: run `pytest -q` — Expected: FAIL\n"
+                    "- [ ] Step 3: implement, run again — Expected: PASS",
                 },
                 {
                     "id": "tests",
@@ -171,6 +183,14 @@ def greeter_fake_agent(buggy_first: bool = True) -> FakeAgentRunner:
             "planner": plan,
             "builder": builds,
             "auditor": lambda req: {"findings": []},
+            "reviewer": lambda req: {"spec_compliant": True, "findings": [], "summary": "Approved"},
+            "finisher": lambda req: {
+                "tests_passed": True,
+                "test_command": "pytest -q",
+                "test_summary": "all tests pass",
+                "pr_title": "feat: personalised greeting",
+                "pr_summary": "Adds an optional, trimmed name to `greet()`; blank names are rejected.",
+            },
             "resolver": lambda req: "RESOLVED",
         }
     )

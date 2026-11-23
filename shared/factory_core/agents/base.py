@@ -20,9 +20,10 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from ..skills import deploy_skills, skill_globs
 from ..stack import glob_match
 
-Role = Literal["grill", "driver_writer", "planner", "builder", "auditor", "resolver"]
+Role = Literal["grill", "driver_writer", "planner", "builder", "reviewer", "auditor", "resolver", "finisher"]
 RUN_DIR = ".factory/run"
 
 
@@ -167,6 +168,7 @@ class AgentRunner(ABC):
     def _invoke(self, req: AgentRequest, prompt: str) -> AgentResult: ...
 
     def run(self, req: AgentRequest) -> AgentResult:
+        req.protected = list(dict.fromkeys([*req.protected, *skill_globs(deploy_skills(req.workdir))]))
         prompt = req.prompt
         if req.schema is not None:
             prompt += JSON_SUFFIX.format(schema=json.dumps(req.schema.model_json_schema(), indent=1)[:12000])

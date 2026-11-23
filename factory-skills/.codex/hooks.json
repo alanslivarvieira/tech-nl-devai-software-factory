@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "powershell": "& \".codex/hooks/superpowers/hooks/run-hook.cmd\" session-start",
+            "shell": "bash",
+            "async": false,
+            "command": "\".codex/hooks/superpowers/hooks/run-hook.cmd\" session-start"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -61,10 +61,33 @@ class FactoryState(TypedDict, total=False):
     last_report: dict[str, Any] | None
     fingerprints: list[str]
     escalation: dict[str, Any] | None
+    # finish (superpowers finishing-a-development-branch)
+    finish: dict[str, Any] | None
     # outcome
     status: Status
     pr_url: str | None
     error: str | None
+
+
+class TaskState(TypedDict, total=False):
+    """One task of the build (superpowers subagent-driven-development): implement → review → fix loop.
+    Fresh agent sessions only see the task, its brief, the contract and the previous review findings."""
+
+    task: dict[str, Any]
+    worktree: str
+    base_sha: str
+    feature_key: str
+    feature_id: str
+    engine: str
+    stack: str
+    last_report: dict[str, Any] | None
+    protected: list[str]
+    review_round: int
+    review: dict[str, Any] | None
+    fix: bool
+    ok: bool
+    summary: str
+    sha: str
 
 
 class VerifyState(TypedDict, total=False):

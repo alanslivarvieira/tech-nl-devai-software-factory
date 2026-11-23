@@ -1,0 +1,26 @@
+# Agent skills the software factory deploys into every coding-agent working directory
+# (see shared/factory_core/skills.py). Update with `apm update` / `apm install`, commit apm.lock.yaml.
+name: factory-skills
+version: 1.0.0
+description: Skills used by the factory nodes (grill, plan, build, review, finish).
+targets: [copilot, claude, codex]
+dependencies:
+  apm:
+    # obra/superpowers basic workflow steps 3-7, plus the sub-skills they require.
+    - git: obra/superpowers
+      ref: main
+      skills:
+        - writing-plans
+        - subagent-driven-development
+        - executing-plans
+        - test-driven-development
+        - requesting-code-review
+        - finishing-a-development-branch
+        - verification-before-completion
+        - systematic-debugging
+    # Matt Pocock's grill-me (delegates to the grilling skill).
+    - git: mattpocock/skills
+      ref: main
+      skills:
+        - grill-me
+        - grilling

@@ -36,6 +36,12 @@
           },
           "title": "Ac Ids",
           "type": "array"
+        },
+        "plan": {
+          "default": "",
+          "description": "Task brief in superpowers writing-plans format (markdown): files, interfaces and bite-sized RED/GREEN steps with exact commands and expected output",
+          "title": "Plan",
+          "type": "string"
         }
       },
       "required": [

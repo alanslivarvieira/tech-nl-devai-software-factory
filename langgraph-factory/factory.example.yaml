@@ -4,6 +4,7 @@ mutation_threshold: 70
 max_mutants: 150
 stall_limit: 3        # identical failure fingerprint N times -> ask the human (continue / amend / abort)
 max_iterations: 0     # 0 = keep looping until green (the stall breaker still applies)
+review_rounds: 2      # per-task review → fix passes (superpowers task review); 0 disables the task review
 gate_timeout_s: 900
 default_engine: copilot
 run_setup: true

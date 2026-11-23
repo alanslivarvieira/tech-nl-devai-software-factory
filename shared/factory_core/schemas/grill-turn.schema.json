@@ -39,6 +39,59 @@
       "title": "Decision",
       "type": "object"
     },
+    "GrillOption": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "Short letter the human can answer with, e.g. 'A'",
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ],
+      "title": "GrillOption",
+      "type": "object"
+    },
+    "GrillQuestion": {
+      "additionalProperties": false,
+      "description": "One question of a grilling round (Matt Pocock's ``grilling`` skill): the human may answer `yes` to accept\nthe recommendation, pick an option compactly (``1A, 2B``) or answer in free text.",
+      "properties": {
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/GrillOption"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "recommendation": {
+          "default": "",
+          "description": "Your recommended answer and why",
+          "title": "Recommendation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "title": "GrillQuestion",
+      "type": "object"
+    },
     "HttpRoute": {
       "additionalProperties": false,
       "properties": {
@@ -361,7 +414,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Structured output of one grill-agent turn.",
+  "description": "Structured output of one grill-agent turn (one grilling round).",
   "properties": {
     "status": {
       "enum": [
@@ -373,7 +426,7 @@
     },
     "questions": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/GrillQuestion"
       },
       "title": "Questions",
       "type": "array"

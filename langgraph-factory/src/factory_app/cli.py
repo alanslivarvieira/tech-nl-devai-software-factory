@@ -214,7 +214,8 @@ def show(waiting: dict[str, Any]) -> None:
     if kind == "questions":
         print("🔥 The factory asks:")
         for q in waiting.get("questions", []):
-            print(f"   {q}")
+            print("   " + q.replace("\n", "\n   ") + "\n")
+        print("Reply `yes` to accept my recommendations, answer like `1A, 2B`, or in your own words.")
     elif kind == "approval":
         print("📝 Intent preview:")
         if waiting.get("intent_path"):

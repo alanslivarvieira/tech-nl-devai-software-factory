@@ -19,13 +19,20 @@ from ghaw_lib import load_issue
 from factory_core import pipeline
 from factory_core.models import Task, TaskGraph, VerificationReport
 from factory_core.recon import repo_map
-from factory_core.resources import render_prompt
 from factory_core.stack import detect_stack, load_profile
 from factory_core.tad_runner.layout import SpecLayout
 
 COMMENT_RULE = (
     "\n\n---\nPost your answer as exactly ONE comment on issue #{n} of {repo} using the add-comment safe "
     "output. Start the comment with the line `{marker}`."
+)
+INLINE_EXECUTION = (
+    "\n\n---\nIn this workflow there is one build session for the whole plan, so you are both controller and "
+    "implementer (this overrides the one-task and no-final-review rules above): execute the tasks in order "
+    "with the `executing-plans` skill (inline execution, no "
+    "subagents, no worktrees), `test-driven-development` for every step, and before finishing do the "
+    "`requesting-code-review` self-review of the whole change against `code-reviewer.md` and fix "
+    "Critical/Important findings test-first. The factory's audit phase is the independent whole-branch review."
 )
 
 
@@ -64,17 +71,11 @@ def render(phase: str, issue, target: Path, repo: str, fix: bool) -> str:  # typ
             + "\n\nThe repository is checked out in `./target`; write the driver there."
         )
     if phase == "plan":
-        prompt = render_prompt(
-            "planner",
-            spec_dir=anchors["spec_rel"],
-            intent_yaml=layout.intent.read_text(encoding="utf-8"),
-            stack=stack or "unknown",
-            repo_map=repo_map(target),
-        )
+        prompt = pipeline.planner_prompt(target, anchors["spec_rel"], stack or "unknown", repo_map(target))
         return (
             prompt
             + COMMENT_RULE.format(n=n, repo=repo, marker="<!-- factory:plan -->")
-            + ' Then give the task graph as one ```json block: {"tasks": [...]}.'
+            + ' Then give the task graph as one ```json block: {"tasks": [...]} (each task with its `plan`).'
         )
     if phase == "build":
         plan_comment = issue.latest("plan")
@@ -87,16 +88,22 @@ def render(phase: str, issue, target: Path, repo: str, fix: bool) -> str:  # typ
             )
             or "Implement the approved contract."
         )
+        brief = "\n\n".join(
+            f"#### Task {i + 1}: {graph.get(t).title} (`{t}`)\n{graph.get(t).plan or '(no detailed steps)'}"  # type: ignore[union-attr]
+            for i, t in enumerate(order)
+        )
         task = Task(
             id=f"build-{issue.iteration}",
             title="Implement the plan (tasks in order)",
             description=description,
             ac_ids=[],
+            plan=brief,
         )
         report = latest_report(issue) if fix else None
         return (
             pipeline.builder_prompt(task, anchors["feature_id"], stack or "unknown", report)
             + "\n\nThe repository is checked out in `./target`; make all changes there."
+            + INLINE_EXECUTION
         )
     if phase == "audit":
         report = latest_report(issue)

@@ -12,19 +12,31 @@ from langgraph.types import Send, interrupt
 from factory_core import pipeline
 from factory_core.agents import AgentRequest
 from factory_core.gates import GateContext, run_gates
-from factory_core.models import AuditResult, GrillTurn, SpecDraft, Task, TaskGraph, VerificationReport
+from factory_core.models import (
+    AuditResult,
+    FinishResult,
+    GrillQuestion,
+    GrillTurn,
+    ReviewResult,
+    SpecDraft,
+    Task,
+    TaskGraph,
+    VerificationReport,
+)
 from factory_core.recon import repo_map
 from factory_core.reports import chat_summary, failure_brief, pr_body, report_markdown
 from factory_core.resources import render_prompt
+from factory_core.skills import git_exclude
 from factory_core.spec import draft_to_files, render_markdown
 from factory_core.stack import detect_stack, load_profile
 from factory_core.tad_runner.layout import SpecLayout
 from factory_core.tad_runner.runner import load_intent
 
 from ..services import Services, clone
-from ..state import FactoryState, VerifyState
+from ..state import FactoryState, TaskState, VerifyState
 
 ALWAYS_PROTECTED = [".factory/specs/**", ".github/workflows/**", "CODEOWNERS", ".github/CODEOWNERS"]
+PLANS_DIR = ".factory/plans"
 ENGINE_CMD = re.compile(r"/engine\s+(copilot|claude|codex)\b", re.I)
 APPROVE = {"/approve", "approve", "approved", "lgtm", "ship it"}
 
@@ -34,11 +46,11 @@ def _report(state: FactoryState) -> VerificationReport | None:
     return VerificationReport.model_validate(raw) if raw else None
 
 
-def _number_questions(questions: list[str]) -> list[str]:
+def _number_questions(questions: list[GrillQuestion]) -> list[str]:
     numbered = []
     for index, question in enumerate(questions, start=1):
-        text = re.sub(r"^\s*\d+[.)]\s*", "", question).strip()
-        numbered.append(f"{index}. {text}")
+        question.body = re.sub(r"^\s*\d+[.)]\s*", "", question.body).strip()
+        numbered.append(question.render(index))
     return numbered
 
 
@@ -117,10 +129,16 @@ class Nodes:
         turn: GrillTurn = res.data
         if turn.status == "questions":
             questions = _number_questions(turn.questions)
-            text = "\n".join(questions)
-            self._emit(state, "questions", text, questions=questions, notes=turn.notes)
+            text = "\n\n".join(questions)
+            items = [q.model_dump() for q in turn.questions]
+            self._emit(state, "questions", text, questions=questions, question_items=items, notes=turn.notes)
             return {
-                "pending": {"type": "questions", "questions": questions, "notes": turn.notes},
+                "pending": {
+                    "type": "questions",
+                    "questions": questions,
+                    "question_items": items,
+                    "notes": turn.notes,
+                },
                 "draft": None,
                 "critic_findings": [],
                 "status": "grilling",
@@ -252,13 +270,7 @@ class Nodes:
     def plan(self, state: FactoryState) -> dict[str, Any]:
         workdir = Path(state["workdir"])
         intent = load_intent(SpecLayout(workdir / state["spec_rel"]))
-        prompt = render_prompt(
-            "planner",
-            spec_dir=state["spec_rel"],
-            intent_yaml=(workdir / state["spec_rel"] / "intent.yaml").read_text(encoding="utf-8"),
-            stack=state["stack"],
-            repo_map=state.get("repo_map", ""),
-        )
+        prompt = pipeline.planner_prompt(workdir, state["spec_rel"], state["stack"], state.get("repo_map", ""))
         res = self.s.agent(state["engine"]).run(
             AgentRequest(role="planner", prompt=prompt, workdir=workdir, read_only=True, schema=TaskGraph)
         )
@@ -270,12 +282,17 @@ class Nodes:
                     Task(id="feature", title=intent.title, description=intent.summary, ac_ids=sorted(intent.ac_ids()))
                 ]
             )
+        plan_path = workdir / PLANS_DIR / f"{intent.feature_id}.md"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(pipeline.plan_markdown(intent, graph), encoding="utf-8", newline="\n")
+        git_exclude(workdir, [f"/{PLANS_DIR}/"])
         layers = graph.topological_layers()
         self._emit(
             state,
             "planned",
             f"Task graph: {' → '.join('[' + ', '.join(layer) + ']' for layer in layers)}",
             task_graph=graph.model_dump(),
+            plan_path=str(plan_path),
         )
         return {"task_graph": graph.model_dump(), "completed": [], "iteration": 1, "status": "building"}
 
@@ -307,31 +324,90 @@ class Nodes:
         ]
 
     def worker(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """One SDD task: implement → review → (fix → review)* in a task subgraph, on its own worktree."""
         task = Task.model_validate(payload["task"])
         workdir = Path(payload["workdir"])
         tag = f"{task.id}-{payload['iteration']}-{uuid.uuid4().hex[:4]}"
         branch = f"factory-task/{payload['feature_key']}/{tag}"
         wt = workdir.parent / "worktrees" / tag
         pipeline.git(workdir, "worktree", "add", "-q", "-b", branch, str(wt), "HEAD")
-        report = VerificationReport.model_validate(payload["last_report"]) if payload.get("last_report") else None
-        prompt = pipeline.builder_prompt(task, payload["feature_id"], payload["stack"], report)
         self.s.events.emit(payload["feature_key"], "building", f"Task `{task.id}`: {task.title}")
-        res = self.s.agent(payload["engine"]).run(
-            AgentRequest(role="builder", prompt=prompt, workdir=wt, protected=payload["protected"])
-        )
-        sha = pipeline.commit_all(wt, f"factory: {task.title}\n\nTask: {task.id}", require_factory_branch=True)
+        ts: TaskState = {
+            "task": payload["task"],
+            "worktree": str(wt),
+            "base_sha": pipeline.head(wt),
+            "feature_key": payload["feature_key"],
+            "feature_id": payload["feature_id"],
+            "engine": payload["engine"],
+            "stack": payload["stack"],
+            "last_report": payload.get("last_report"),
+            "protected": payload["protected"],
+            "review_round": 0,
+            "review": None,
+        }
+        out = self.task_graph.invoke(ts)  # type: ignore[attr-defined]
         return {
             "task_results": [
                 {
                     "task_id": task.id,
                     "branch": branch,
                     "worktree": str(wt),
-                    "ok": res.ok,
-                    "summary": (res.text or res.error)[-500:],
-                    "sha": sha,
+                    "ok": out.get("ok", False),
+                    "summary": out.get("summary", "")[-500:],
+                    "sha": out.get("sha", ""),
+                    "review": out.get("review"),
                 }
             ]
         }
+
+    # task subgraph nodes (TaskState only) — superpowers subagent-driven-development, one task
+    def t_implement(self, ts: TaskState) -> dict[str, Any]:
+        task = Task.model_validate(ts["task"])
+        wt = Path(ts["worktree"])
+        report = VerificationReport.model_validate(ts["last_report"]) if ts.get("last_report") else None
+        review = ReviewResult.model_validate(ts["review"]) if ts.get("review") else None
+        prompt = pipeline.builder_prompt(task, ts["feature_id"], ts["stack"], report, review)
+        res = self.s.agent(ts["engine"]).run(
+            AgentRequest(role="builder", prompt=prompt, workdir=wt, protected=ts["protected"])
+        )
+        message = f"factory: {task.title}\n\nTask: {task.id}"
+        if review is not None:
+            message = f"factory: address review of {task.title}\n\nTask: {task.id}"
+        sha = pipeline.commit_all(wt, message, require_factory_branch=True)
+        return {"ok": res.ok, "summary": res.text or res.error, "sha": sha}
+
+    def t_review(self, ts: TaskState) -> dict[str, Any]:
+        cap = self.s.settings.factory.review_rounds
+        if cap <= 0:
+            return {"fix": False}
+        task = Task.model_validate(ts["task"])
+        wt = Path(ts["worktree"])
+        rnd = ts.get("review_round", 0)
+        prompt = pipeline.reviewer_prompt(wt, task, ts["feature_id"], ts["base_sha"], ts.get("summary", ""), rnd)
+        res = self.s.agent(ts["engine"]).run(
+            AgentRequest(role="reviewer", prompt=prompt, workdir=wt, read_only=True, schema=ReviewResult)
+        )
+        if not res.ok:
+            self.s.events.emit(
+                ts["feature_key"], "error", f"Task review of `{task.id}` failed; continuing", error=res.error[:2000]
+            )
+            return {"fix": False}
+        review: ReviewResult = res.data
+        fix = review.needs_fixes and rnd < cap
+        blocking = [f for f in review.findings if f.severity in ("critical", "important")]
+        verdict = (
+            "approved"
+            if not blocking
+            else f"{len(blocking)} critical/important finding(s)" + ("; fixing" if fix else "; review rounds exhausted")
+        )
+        self.s.events.emit(
+            ts["feature_key"], "reviewed", f"Task `{task.id}` review: {verdict}", review=review.model_dump()
+        )
+        return {"review": review.model_dump(), "fix": fix, "review_round": rnd + 1 if fix else rnd}
+
+    @staticmethod
+    def route_review(ts: TaskState) -> str:
+        return "implement" if ts.get("fix") else "done"
 
     def integrate(self, state: FactoryState) -> dict[str, Any]:
         workdir = Path(state["workdir"])
@@ -453,13 +529,15 @@ class Nodes:
             return {"fingerprints": fps, "escalation": esc, "status": "escalated", "pending": esc}
         return {"fingerprints": fps, **self._fix_round(state, report)}
 
-    def _fix_round(self, state: FactoryState, report: VerificationReport) -> dict[str, Any]:
+    def _fix_round(self, state: FactoryState, report: VerificationReport, brief: str | None = None) -> dict[str, Any]:
         it = state.get("iteration", 1) + 1
-        failing = ", ".join(g.name for g in report.gates if g.blocking) or "audit findings"
+        failing = (
+            "finishing test run" if brief else ", ".join(g.name for g in report.gates if g.blocking) or "audit findings"
+        )
         fix = Task(
             id=f"fix-{it}",
             title=f"Fix verification failures ({failing})",
-            description=failure_brief(report, max_chars=3000),
+            description=brief or failure_brief(report, max_chars=3000),
         )
         self._emit(state, "fixing", f"Iteration {it}: sending failures back to a fresh builder ({failing})")
         return {
@@ -473,7 +551,7 @@ class Nodes:
     def route_triage(self, state: FactoryState) -> str:
         report = _report(state)
         if report and report.passed:
-            return "pr"
+            return "finish"
         return "escalate" if state.get("escalation") else "schedule"
 
     def escalate(self, state: FactoryState) -> dict[str, Any]:
@@ -496,10 +574,57 @@ class Nodes:
             }
         report = _report(state)
         assert report is not None
-        return {"fingerprints": [], "pending": None, **self._fix_round(state, report)}
+        brief = (state.get("escalation") or {}).get("fix_brief")
+        return {"fingerprints": [], "pending": None, **self._fix_round(state, report, brief)}
 
     def route_escalate(self, state: FactoryState) -> str:
         return {"aborted": "end", "grilling": "grill_turn"}.get(state.get("status", ""), "schedule")
+
+    # --------------------------------------------------------------------------------------- finish
+    def finish(self, state: FactoryState) -> dict[str, Any]:
+        """superpowers finishing-a-development-branch, choice fixed to 'push and create a PR'."""
+        workdir = Path(state["workdir"])
+        report = _report(state)
+        assert report is not None
+        prompt = pipeline.finisher_prompt(
+            workdir,
+            state["spec_rel"],
+            report,
+            f"factory/{state['feature_key']}",
+            state.get("base_branch", "main"),
+        )
+        res = self.s.agent(state["engine"]).run(
+            AgentRequest(
+                role="finisher", prompt=prompt, workdir=workdir, protected=self._protected(state), schema=FinishResult
+            )
+        )
+        if pipeline.git(workdir, "status", "--porcelain"):
+            pipeline.git(workdir, "reset", "-q", "--hard", "HEAD")
+            pipeline.git(workdir, "clean", "-q", "-fd")
+            self._emit(state, "finish_cleanup", "Discarded stray changes left by the finishing step")
+        if not res.ok:
+            self._emit(state, "error", "Finishing step failed; opening the PR anyway", error=res.error[:2000])
+            return {"finish": None, "escalation": None}
+        fin: FinishResult = res.data
+        if not fin.tests_passed:
+            reason = f"the finishing step's test run failed ({fin.test_command or 'project tests'})"
+            esc = {
+                "type": "escalation",
+                "reason": reason,
+                "report_markdown": f"{fin.test_summary}\n\n{report_markdown(report)}",
+                "options": ["continue", "amend", "abort"],
+                "fix_brief": f"The full test suite fails on the verified branch.\n"
+                f"Command: `{fin.test_command}`\n\n{fin.test_summary}",
+            }
+            self._emit(
+                state, "escalation", f"Need your call: {reason}. Reply continue / amend <change> / abort.", **esc
+            )
+            return {"finish": fin.model_dump(), "escalation": esc, "status": "escalated", "pending": esc}
+        self._emit(state, "finished", f"Branch finished: {fin.test_summary or 'tests pass'}", **fin.model_dump())
+        return {"finish": fin.model_dump(), "escalation": None}
+
+    def route_finish(self, state: FactoryState) -> str:
+        return "escalate" if state.get("escalation") else "pr"
 
     # ------------------------------------------------------------------------------------------- pr
     def pr(self, state: FactoryState) -> dict[str, Any]:
@@ -508,6 +633,7 @@ class Nodes:
         intent = load_intent(layout)
         report = _report(state)
         assert report is not None
+        fin = FinishResult.model_validate(state["finish"]) if state.get("finish") else None
         body = pr_body(
             intent,
             state["spec_rel"],
@@ -516,13 +642,14 @@ class Nodes:
             state.get("iteration", 1),
             state["manifest_hash"],
             state["engine"],
+            summary=fin.pr_summary if fin else "",
         )
         url = self.s.githost.open_pr(
             workdir,
             state["repo_url"],
             f"factory/{state['feature_key']}",
             state.get("base_branch", "main"),
-            f"feat: {intent.title}",
+            (fin.pr_title if fin and fin.pr_title else "") or f"feat: {intent.title}",
             body,
         )
         self._emit(state, "pr_opened", f"PR ready for review: {url}", pr_url=url)

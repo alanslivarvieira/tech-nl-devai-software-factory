@@ -34,6 +34,10 @@ steps:
       python-version: "3.12"
   - name: Install factory core
     run: pip install ./shared
+  - name: Deploy the factory skills (superpowers + grill-me, pinned by factory-skills/apm.lock.yaml)
+    run: python -m factory_core.skills deploy .
+    env:
+      FACTORY_SKILLS_DIR: factory-skills
   - name: Resolve target repository
     id: target
     run: python gh-aw-factory/scripts/step.py target-info --issue "${{ inputs.issue }}"
@@ -87,4 +91,6 @@ were rendered for you into `/tmp/gh-aw/factory/prompt.md`. Read that file first 
 - The target repository is checked out in `./target`.
 - The approved tests-as-data contract lives under `./target/.factory/specs/` and is **read-only for you**: a
   guard rejects any patch that touches it, the test thresholds, CI files or adds skip markers.
+- The factory skills (obra/superpowers, grill-me/grilling) are installed in this workspace; use the ones your
+  instructions name.
 - Do not commit or push: the factory applies your working-tree changes after the guard approves them.

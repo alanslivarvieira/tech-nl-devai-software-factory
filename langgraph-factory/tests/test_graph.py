@@ -222,6 +222,49 @@ def test_local_git_repo_gets_the_feature_branch_pushed_back(tmp_path):
     assert "Pushed to" in (rt.services.workspace(key) / "PR.md").read_text(encoding="utf-8")
 
 
+def test_task_review_sends_findings_back_until_rounds_run_out(tmp_path):
+    agent = greeter_fake_agent(buggy_first=False)
+    agent.script["reviewer"] = lambda req: {
+        "spec_compliant": False,
+        "findings": [{"severity": "important", "detail": "edge case missing", "file": "src/greeter/__init__.py:1"}],
+    }
+    rt = runtime(tmp_path, agent, review_rounds=1)
+    key = drive(rt, ["ok", "/approve"])
+    assert rt.status(key)["status"] == "pr_opened"
+
+    # Each of the two tasks: implement → review → fix → review (cap reached) → done.
+    assert len(agent.calls_for("reviewer")) == 4
+    fixes = [c for c in agent.calls_for("builder") if "The task review found issues" in c.prompt]
+    assert len(fixes) == 2 and all("edge case missing" in c.prompt for c in fixes)
+    reviewed = [e["message"] for e in rt.services.events.since(key) if e["kind"] == "reviewed"]
+    assert sum("fixing" in m for m in reviewed) == 2 and sum("rounds exhausted" in m for m in reviewed) == 2
+
+    # writing-plans: the per-task brief reaches the implementer and the plan document is saved (not committed).
+    assert any("Step 1: write the failing test" in c.prompt for c in agent.calls_for("builder"))
+    plan = rt.services.workspace(key) / "repo/.factory/plans/personalised-greeting.md"
+    assert "### Task 1: Personalised greet() (`impl`)" in plan.read_text(encoding="utf-8")
+
+    # finishing-a-development-branch: the finisher's PR text is used.
+    pr = (rt.services.workspace(key) / "PR.md").read_text(encoding="utf-8")
+    assert "feat: personalised greeting" in pr and "blank names are rejected" in pr
+
+
+def test_failing_finish_escalates_and_continue_runs_a_fix_round(tmp_path):
+    agent = greeter_fake_agent(buggy_first=False)
+    passed = agent.script["finisher"]
+    agent.script["finisher"] = [
+        lambda req: {"tests_passed": False, "test_command": "pytest -q", "test_summary": "1 failed: test_flaky"},
+        passed,
+    ]
+    rt = runtime(tmp_path, agent)
+    key = drive(rt, ["ok", "/approve"])
+    st = rt.status(key)
+    assert st["status"] == "escalated" and "finishing step's test run failed" in st["waiting_for"]["reason"]
+    rt.reply(key, {"action": "continue"}, wait=True)
+    assert rt.status(key)["status"] == "pr_opened"
+    assert "1 failed: test_flaky" in agent.calls_for("builder")[-1].prompt
+
+
 def test_docker_executor_mounts_contract_read_only(tmp_path):
     (tmp_path / ".factory/specs").mkdir(parents=True)
     cmd = DockerExecutor("img").command(["claude", "-p", str(tmp_path / "x.md")], tmp_path, {"FACTORY_ROLE": "builder"})

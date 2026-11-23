@@ -4,15 +4,16 @@
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | IntentSpec, SpecDraft, GrillTurn, TaskGraph (DAG + layering), GateResult, VerificationReport (+ stall fingerprint), AuditResult, FactoryConfig |
+| `models.py` | IntentSpec, SpecDraft, GrillTurn (+ structured GrillQuestion), TaskGraph (DAG + layering, per-task plan brief), GateResult, VerificationReport (+ stall fingerprint), AuditResult, ReviewResult, FinishResult, FactoryConfig |
 | `tad_runner/` | tests-as-data loader (CSV/YAML), Gherkin generation + execution, Hypothesis properties, drivers (jsonl/http/cli), comparisons + approval-style diffs, freeze check, JUnit/JSON reports — CLI `tad` |
 | `guard/` | manifest lock/verify (external trust anchor), change rules on git diffs or agent patches — CLI `factory-guard` |
 | `gates/` | deterministic verification gates driven by stack profiles — CLI `factory-gates` |
 | `mutation/` | `pymut` (factory-owned AST mutation testing for Python, killing with unit + contract tests) and a threshold checker for Stryker/PIT reports |
 | `stack_profiles/` | python, node, java, dotnet, go: detection, globs, guarded settings, skip markers, gate commands, driver templates |
 | `agents/` | headless adapters for **GitHub Copilot CLI**, **Claude Code**, **Codex** + scripted fake; fresh session per call, protected paths read-only, JSON-schema answers with one repair retry |
-| `prompts/` | grill, driver writer, planner, builder, test auditor, conflict resolver |
-| `pipeline.py` | phase logic used by both factories (grill prompt, critic, write/freeze contract, builder/auditor prompts, fresh clone) |
+| `prompts/` | grill, driver writer, planner, builder, task reviewer, test auditor, finisher, conflict resolver — each names the agent skill it follows plus "factory overrides" for headless runs |
+| `skills.py` | deploys the APM-installed skills from `factory-skills/` into every agent working directory (git-excluded, protected) — `python -m factory_core.skills deploy <dir>` |
+| `pipeline.py` | phase logic used by both factories (grill prompt, critic, write/freeze contract, planner/builder/reviewer/auditor/finisher prompts, plan document, review package, fresh clone) |
 | `reports/` | gate tables, failure briefs for fresh builders, PR bodies, chat summaries |
 
 ## LangGraph factory
@@ -27,8 +28,8 @@ flowchart LR
   ask_human -- /abort --> END
   freeze -- freeze check failed --> ask_human
   freeze --> plan --> schedule
-  schedule -- Send per ready task --> worker1[worker (worktree)]
-  schedule -- Send --> worker2[worker (worktree)]
+  schedule -- Send per ready task --> worker1[worker: implement ⇄ review (worktree)]
+  schedule -- Send --> worker2[worker: implement ⇄ review (worktree)]
   worker1 --> integrate
   worker2 --> integrate
   integrate --> schedule
@@ -37,7 +38,8 @@ flowchart LR
     checkout --> gates --> audit
   end
   verify --> triage
-  triage -- green --> pr --> END
+  triage -- green --> finish --> pr --> END
+  finish -- tests fail --> escalate
   triage -- red --> schedule
   triage -- stalled / contradiction --> escalate{{interrupt}}
   escalate -- continue --> schedule
@@ -48,8 +50,10 @@ flowchart LR
 - **Checkpointing**: Postgres (`DATABASE_URL`) or in-memory; `thread_id` = feature key, so a feature survives
   restarts and can wait days for a human.
 - **Graph engineering**: the planner's DAG is executed layer by layer; each ready task is a `Send` to a worker
-  that runs a fresh builder session in its own git worktree; `integrate` merges branches (conflicts → resolver
-  agent). Fix rounds are single-task graphs built from the failure brief.
+  that runs a **task subgraph** in its own git worktree — the superpowers subagent-driven-development loop:
+  fresh implementer session (TDD) → fresh read-only task reviewer → fix pass on Critical/Important findings
+  (at most `review_rounds`). `integrate` merges branches (conflicts → resolver agent). Fix rounds are
+  single-task graphs built from the failure brief.
 - **Clean context**: the `verify` node hands the subgraph only `{commit, freeze_sha, manifest_hash, spec,
   stack, engine}`; the subgraph clones the repo afresh, runs the gates, and the auditor agent runs read-only in
   that clone.
@@ -87,3 +91,6 @@ sequenceDiagram
 - `engine:` is compile-time in gh-aw, so `gen_workflows.py` emits each phase for copilot / claude / codex and the
   orchestrator dispatches the variant chosen during the grill.
 - `templates/target-repo/factory-guard.yml` re-verifies the contract on every factory PR as a required check.
+- Each agentic workflow deploys the factory skills into the workspace before the agent starts. The build phase
+  is one session that executes the whole plan with `executing-plans` (inline) + TDD and a self-review; the
+  audit phase is the independent whole-branch review. There is no separate per-task review or finish phase.

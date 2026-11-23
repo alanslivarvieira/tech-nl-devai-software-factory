@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir pytest pytest-cov diff-cover ruff mypy hypothesis
 COPY shared /opt/factory/shared
 RUN pip install --no-cache-dir /opt/factory/shared
 
+# Agent skills (obra/superpowers + grill-me), installed with APM and pinned by factory-skills/apm.lock.yaml.
+# The factory copies them into every agent working directory (see factory_core/skills.py).
+COPY factory-skills /opt/factory/factory-skills
+ENV FACTORY_SKILLS_DIR=/opt/factory/factory-skills
+
 RUN git config --system user.name "AI Software Factory" \
  && git config --system user.email "factory@users.noreply.github.com" \
  && git config --system --add safe.directory '*'

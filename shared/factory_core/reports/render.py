@@ -106,12 +106,14 @@ def pr_body(
     iterations: int,
     manifest_hash: str,
     engine: str,
+    summary: str = "",
 ) -> str:
     acs = "\n".join(f"- **{ac.id}** — {ac.description}" for ac in intent.acceptance_criteria)
+    changes = f"\n### What changed\n{summary.strip()}\n" if summary.strip() else ""
     return f"""## {intent.title}
 
 {intent.summary}
-
+{changes}
 ### Acceptance criteria
 {acs}
 

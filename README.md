@@ -33,27 +33,41 @@ to read, review and protect from "make the tests pass by changing the tests". Se
 
 ## The pipeline
 
-1. **Grill** — the agent interviews the requester (≤5 sharp questions per turn: edge cases, exact error
-   messages, interface, existing behaviour, which coding agent: *Copilot CLI, Claude Code or Codex*). A
-   deterministic **spec critic** checks every acceptance criterion has examples before the human sees a draft.
+The agent nodes follow published **agent skills** instead of home-grown prompting: Matt Pocock's
+[grill-me / grilling](https://www.aihero.dev/skills-grill-me) for the interview and
+[obra/superpowers](https://github.com/obra/superpowers) steps 3–7 for planning, building, reviewing and
+finishing. They are imported and pinned with [APM](https://github.com/microsoft/apm) in
+[`factory-skills/`](factory-skills/README.md) and copied into every agent working directory.
+
+1. **Grill** (`grilling`) — the agent interviews the requester in rounds, asking every question whose
+   prerequisites are settled, each with a recommended answer (`yes` accepts them, `1A, 2B` picks options):
+   edge cases, exact error messages, interface, existing behaviour, which coding agent: *Copilot CLI, Claude
+   Code or Codex*. A deterministic **spec critic** checks every acceptance criterion has examples before the
+   human sees a draft.
 2. **Contract** — `intent.yaml` + `examples/*.csv` + `scenarios/*.yaml` + `properties.yaml`; Gherkin
    `features/*.feature` are generated from the data; a thin, **assertion-free driver** maps DSL ops to the
    system's public interface.
 3. **Freeze** — *freeze check* proves the tests are not vacuous (new cases must fail on today's code,
    `existing` cases must pass), then a sha256 **manifest** is locked and its root hash stored **outside the
    agent's reach** (LangGraph DB / issue body).
-4. **Plan** — a schema-validated **task graph** (DAG).
-5. **Build** — fresh agent sessions implement tasks; the contract is read-only (OS bit / `:ro` mount /
-   CLI deny rules) and every change goes through the **guard**.
+4. **Plan** (`writing-plans`) — a schema-validated **task graph** (DAG); each task carries its plan brief
+   (bite-sized RED→GREEN steps), saved as `.factory/plans/<feature>.md`.
+5. **Build** (`subagent-driven-development` + `test-driven-development`) — the graph is the SDD controller:
+   a fresh implementer session per task, then a fresh **task review** (spec compliance + code quality,
+   `requesting-code-review`) whose Critical/Important findings go back to the implementer (`review_rounds`).
+   The contract is read-only (OS bit / `:ro` mount / CLI deny rules) and every change goes through the
+   **guard**.
 6. **Verify (clean context)** — fresh clone, fresh session, deterministic gates:
    `integrity → setup → frontend_dependencies → lint → typecheck → build → unit → playwright →
    diff_coverage → contract (CSV/YAML) → acceptance (Gherkin) → property (Hypothesis) → mutation → regression →
-   security`, then a **test auditor**
-   agent that has never seen the build conversation.
+   security`, then a **test auditor** — the whole-branch reviewer (`code-reviewer.md`) — that has never seen
+   the build conversation.
 7. **Loop** — any failure goes back to a *fresh* builder with a bounded failure brief. It loops until green;
    a **stall breaker** (same failure fingerprint *N* times) asks the human: continue / amend the contract /
    abort. Amending is the *only* legitimate way tests change, and it requires re-approval and re-locking.
-8. **PR** — the body renders the contract tables, gate results, iterations and manifest hash.
+8. **Finish + PR** (`finishing-a-development-branch`, choice fixed to *push and create a PR*) — the agent
+   re-runs the test suite and writes the PR title/summary; the factory pushes and opens the PR, whose body
+   renders the contract tables, gate results, iterations and manifest hash.
 
 ## Quick start (no LLM, no Teams, no cloud)
 
@@ -91,8 +105,9 @@ All front-ends share one chat core ([`shared/factory_channels`](shared/factory_c
 ## Repository layout
 
 ```
-shared/factory_core/      tad_runner · guard · gates · mutation (pymut) · agents · prompts · stack_profiles · reports
+shared/factory_core/      tad_runner · guard · gates · mutation (pymut) · agents · prompts · skills · stack_profiles · reports
 shared/factory_channels/  chat core · LangGraph & gh-aw backends · Teams bot (M365 Agents SDK) · terminal client
+factory-skills/           APM manifest + lockfile for the agent skills (superpowers, grill-me) deployed to agents
 langgraph-factory/        LangGraph graph, API, runtime, sandbox, docker-compose
 gh-aw-factory/            agentic workflow generator, orchestrator, deterministic steps, target-repo guard
 examples/                 sample target repo + canned contract used by demos and e2e tests

@@ -147,7 +147,16 @@ class FactoryChat:
         if e.kind == "questions":
             qs = e.data.get("questions") or [e.message]
             notes = e.data.get("notes")
-            return [Reply("🔥 **Grill time**\n\n" + "\n".join(qs) + (f"\n\n_{notes}_" if notes else ""))]
+            hint = "\n\n_Reply `yes` to accept my recommendations, answer like `1A, 2B`, or in your own words._"
+            structured = bool(e.data.get("question_items"))
+            return [
+                Reply(
+                    "🔥 **Grill time**\n\n"
+                    + "\n\n".join(qs)
+                    + (f"\n\n_{notes}_" if notes else "")
+                    + (hint if structured else "")
+                )
+            ]
         if e.kind == "approval_needed":
             return [
                 Reply(

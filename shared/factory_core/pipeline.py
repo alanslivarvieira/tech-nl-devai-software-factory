@@ -9,8 +9,9 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .agents.base import RUN_DIR
 from .guard import lock
-from .models import IntentSpec, SpecDraft, Task, VerificationReport
+from .models import IntentSpec, ReviewResult, SpecDraft, Task, TaskGraph, VerificationReport
 from .reports import failure_brief, report_markdown
 from .resources import render_prompt
 from .spec import intent_markdown, intent_yaml, write_draft
@@ -26,14 +27,17 @@ DRIVER_COMMANDS = {
 }
 
 JSON_GRILL_CONTRACT = """## Output
-Return `status: "questions"` with `questions`, or `status: "draft"` with `draft` = {intent, examples:
-{"<op>.csv": "<csv text>"}, scenarios: {"<name>.yaml": "<yaml text>"}, properties: "<yaml text>" | null}.
-Put a one-paragraph summary for the human in `notes`."""
+Return `status: "questions"` with `questions` (this round's frontier, unnumbered: `title`, `body`, lettered
+`options` when there are alternatives, and your `recommendation`), or `status: "draft"` with `draft` = {intent,
+examples: {"<op>.csv": "<csv text>"}, scenarios: {"<name>.yaml": "<yaml text>"}, properties: "<yaml text>"
+| null}. Put a one-paragraph summary for the human in `notes`."""
 
 MARKDOWN_GRILL_CONTRACT = """## Output
 Post exactly ONE comment. Either:
-- numbered questions (≤5), ending with: "Reply in this issue. Say `/engine copilot|claude|codex` to pick the
-  coding agent.", or
+- this round's questions, formatted as the `grilling` skill says (`❓ **Q1** - **<title>**: <body>` with
+  lettered options when there are alternatives, then `➡️ <your recommended answer>`, questions separated by
+  `---`), ending with: "Reply `yes` to accept my recommendations, answer like `1A, 2B`, or in your own
+  words. Say `/engine copilot|claude|codex` to pick the coding agent.", or
 - a draft that starts with the line `<!-- factory:draft -->`, a short summary for the human, then one fenced
   block per file with a `file=` attribute, e.g. ```` ```yaml file=intent.yaml ```` and
   ```` ```csv file=examples/greet.csv ````, ending with: "Reply `/approve` to freeze this contract or
@@ -176,7 +180,63 @@ def tad_command(spec: str) -> str:
     return f"python -m factory_core.tad_runner.cli run {spec} --repo ."
 
 
-def builder_prompt(task: Task, feature_id: str, stack: str, report: VerificationReport | None) -> str:
+def report_file(task_id: str) -> str:
+    return f"{RUN_DIR}/{task_id}-report.md"
+
+
+def planner_prompt(repo: Path, spec: str, stack: str, repo_map: str) -> str:
+    return render_prompt(
+        "planner",
+        spec_dir=spec,
+        intent_yaml=(repo / spec / "intent.yaml").read_text(encoding="utf-8"),
+        stack=stack,
+        repo_map=repo_map,
+        tad_command=tad_command(spec),
+    )
+
+
+def plan_markdown(intent: IntentSpec, graph: TaskGraph) -> str:
+    """The writing-plans document for the run, assembled from the planner's task graph."""
+    layers = " → ".join("[" + ", ".join(layer) + "]" for layer in graph.topological_layers())
+    lines = [
+        f"# {intent.title} Implementation Plan",
+        "",
+        "> Executed by the AI software factory as superpowers:subagent-driven-development "
+        "(fresh implementer per task, task review after each, whole-branch review at the end).",
+        "",
+        f"**Goal:** {intent.summary}",
+        "",
+        f"**Spec:** `{spec_rel(intent.feature_id)}` (approved, hash-locked tests-as-data contract)",
+        "",
+        f"**Execution order:** {layers}",
+        "",
+        "## Global Constraints",
+        "",
+        *[f"- {ac.id}: {ac.description}" for ac in intent.acceptance_criteria],
+        *[f"- NFR: {n}" for n in intent.nfrs],
+    ]
+    for n, t in enumerate(graph.tasks, start=1):
+        lines += [
+            "",
+            f"### Task {n}: {t.title} (`{t.id}`)",
+            "",
+            t.description,
+            "",
+            f"Depends on: {', '.join(t.depends_on) or '—'} · Files: {', '.join(t.files) or '—'} · "
+            f"Serves: {', '.join(t.ac_ids) or 'all'}",
+            "",
+            t.plan or "_(no detailed steps; implement the description test-first)_",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def builder_prompt(
+    task: Task,
+    feature_id: str,
+    stack: str,
+    report: VerificationReport | None,
+    review: ReviewResult | None = None,
+) -> str:
     brief = failure_brief(report) if report is not None and not report.passed else ""
     return render_prompt(
         "builder",
@@ -185,10 +245,74 @@ def builder_prompt(task: Task, feature_id: str, stack: str, report: Verification
         task_description=task.description,
         task_files=", ".join(task.files) or "(you decide)",
         task_acs=", ".join(task.ac_ids) or "all",
+        task_plan=task.plan or "(no detailed brief — implement the description test-first)",
         spec_dir=spec_rel(feature_id),
         tad_command=tad_command(spec_rel(feature_id)),
-        failure_brief=("## Previous verification failed — fix this first\n" + brief) if brief else "",
+        failure_brief=("## Previous verification failed — fix this first\n" + brief + "\n") if brief else "",
+        review_findings=review_findings_markdown(review) if review is not None else "",
+        report_file=report_file(task.id),
         stack=stack,
+    )
+
+
+def review_findings_markdown(review: ReviewResult) -> str:
+    items = "\n".join(
+        f"- **{f.severity}** ({f.kind}) {f.file or ''}: {f.detail}"
+        + (f"\n  Suggested fix: {f.suggested_fix}" if f.suggested_fix else "")
+        for f in review.findings
+        if f.severity in ("critical", "important")
+    )
+    return (
+        "## The task review found issues — fix them (After Review Findings)\n"
+        "Your previous work on this task is already committed in this worktree. Fix every finding below "
+        "test-first, re-run the covering tests, and append a fix report to your report file.\n"
+        f"{items}\n" + (f"\nReviewer summary: {review.summary}\n" if review.summary else "")
+    )
+
+
+def review_package(repo: Path, base: str, limit: int = 60000) -> str:
+    """Commit list + stat + full diff with context (the superpowers review package) for one task."""
+    exclude = f":(exclude){SPECS_ROOT}"
+    log = git(repo, "log", "--oneline", f"{base}..HEAD")
+    stat = git(repo, "diff", "--stat", base, "HEAD", "--", ".", exclude)
+    diff = git(repo, "diff", "--no-color", "-U10", base, "HEAD", "--", ".", exclude)
+    if len(diff) > limit:
+        diff = diff[:limit] + "\n…(diff truncated)"
+    return f"# Commits\n{log}\n\n# Stat\n{stat}\n\n# Diff\n{diff}\n"
+
+
+def reviewer_prompt(
+    repo: Path, task: Task, feature_id: str, base: str, implementer_summary: str, review_round: int
+) -> str:
+    diff_file = f"{RUN_DIR}/{task.id}-review-{review_round}.diff"
+    (repo / RUN_DIR).mkdir(parents=True, exist_ok=True)
+    (repo / diff_file).write_text(review_package(repo, base), encoding="utf-8")
+    spec = spec_rel(feature_id)
+    return render_prompt(
+        "reviewer",
+        task_id=task.id,
+        task_title=task.title,
+        task_description=task.description,
+        task_acs=", ".join(task.ac_ids) or "all",
+        task_plan=task.plan or "(no detailed brief)",
+        spec_dir=spec,
+        intent_yaml=(repo / spec / "intent.yaml").read_text(encoding="utf-8"),
+        report_file=report_file(task.id),
+        implementer_summary=implementer_summary[-1500:] or "(none)",
+        base_sha=base,
+        head_sha=head(repo),
+        diff_file=diff_file,
+    )
+
+
+def finisher_prompt(repo: Path, spec: str, report: VerificationReport, branch: str, base_branch: str) -> str:
+    return render_prompt(
+        "finisher",
+        branch=branch,
+        base_branch=base_branch,
+        intent_yaml=(repo / spec / "intent.yaml").read_text(encoding="utf-8"),
+        report=report_markdown(report),
+        commit=report.commit,
     )
 
 
