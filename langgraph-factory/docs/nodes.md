@@ -133,7 +133,9 @@ All configured gates run to collect a complete report; the independent audit run
 | `pr` | no | — | Builds the PR body (finisher summary, contract, report, manifest hash) and opens the PR via `githost` (or writes `PR.md` without `GITHUB_TOKEN`). |
 
 Thresholds used by `triage`, the task review and the gates (`stall_limit`, `max_iterations`, `review_rounds`,
-coverage, mutation…) come from `FACTORY_CONFIG` — see [factory.example.yaml](../factory.example.yaml).
+coverage, mutation…) come from `FACTORY_CONFIG` — see [factory.example.yaml](../factory.example.yaml). The
+same file sets the model and reasoning effort per role; see [model-selection.md](model-selection.md) for
+recommendations and the `--usage-report` token report.
 
 ## Where the instructions for each node live
 

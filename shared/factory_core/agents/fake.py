@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .base import AgentRequest, AgentResult, AgentRunner
+from .base import AgentRequest, AgentResult, AgentRunner, Usage
 
 Handler = Callable[[AgentRequest], Any]
 
@@ -49,9 +50,20 @@ class FakeAgentRunner(AgentRunner):
             else:
                 handler = entry
         out = handler(req)
+        text = "" if isinstance(out, dict) else str(out or "done")
+        usage = [self._synthetic_usage(req, prompt, json.dumps(out, default=str) if isinstance(out, dict) else text)]
         if isinstance(out, dict):
-            return AgentResult(ok=True, engine=self.engine, data=out, text="")
-        return AgentResult(ok=True, engine=self.engine, text=str(out or "done"))
+            return AgentResult(ok=True, engine=self.engine, data=out, text="", usage=usage)
+        return AgentResult(ok=True, engine=self.engine, text=text, usage=usage)
+
+    @staticmethod
+    def _synthetic_usage(req: AgentRequest, prompt: str, answer: str) -> Usage:
+        """Deterministic stand-in for CLI token reporting (~4 characters per token)."""
+        return Usage(
+            model=req.model or "fake-model",
+            input_tokens=len(prompt) // 4 + 1,
+            output_tokens=len(answer) // 4 + 1,
+        )
 
     def calls_for(self, role: str) -> list[Call]:
         return [c for c in self.calls if c.role == role]

@@ -8,3 +8,34 @@ review_rounds: 2      # per-task review → fix passes (superpowers task review)
 gate_timeout_s: 900
 default_engine: copilot
 run_setup: true
+
+# Model + reasoning effort per agent role and engine (omit a role/field = the CLI's default).
+# Recommendations and rationale: docs/model-selection.md. Measure with `factory-run --usage-report`.
+# models:
+#   copilot:
+#     grill:         {model: claude-sonnet-4.6, effort: medium}
+#     driver_writer: {model: claude-haiku-4.5}          # haiku takes no effort setting on Copilot
+#     planner:       {model: claude-opus-4.6, effort: high}
+#     builder:       {model: claude-sonnet-4.6, effort: high}
+#     reviewer:      {model: gpt-5.6-sol, effort: medium}
+#     resolver:      {model: claude-sonnet-4.6, effort: medium}
+#     auditor:       {model: claude-opus-4.6, effort: high}
+#     finisher:      {model: claude-haiku-4.5}
+#   claude:
+#     grill:         {model: sonnet, effort: medium}
+#     driver_writer: {model: haiku, effort: low}
+#     planner:       {model: opus, effort: high}
+#     builder:       {model: sonnet, effort: high}
+#     reviewer:      {model: sonnet, effort: medium}
+#     resolver:      {model: sonnet, effort: medium}
+#     auditor:       {model: opus, effort: high}
+#     finisher:      {model: haiku, effort: low}
+#   codex:
+#     grill:         {model: gpt-6.2-sol, effort: medium}
+#     driver_writer: {model: gpt-6-luna, effort: low}
+#     planner:       {model: gpt-6.2-astra, effort: high}
+#     builder:       {model: gpt-6.2-sol, effort: high}
+#     reviewer:      {model: gpt-6.2-sol, effort: medium}
+#     resolver:      {model: gpt-6.2-sol, effort: medium}
+#     auditor:       {model: gpt-6.2-astra, effort: high}
+#     finisher:      {model: gpt-6-luna, effort: low}

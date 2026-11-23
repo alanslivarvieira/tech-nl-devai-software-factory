@@ -109,7 +109,9 @@ class Nodes:
             default_engine=state["engine"],
             feature_id_hint=state["feature_key"],
         )
-        res = self.s.agent(state["engine"]).run(
+        res = self.s.run_agent(
+            state["feature_key"],
+            state["engine"],
             AgentRequest(
                 role="grill",
                 prompt=prompt,
@@ -117,7 +119,7 @@ class Nodes:
                 read_only=True,
                 schema=GrillTurn,
                 meta={"repo_url": state["repo_url"]},
-            )
+            ),
         )
         if not res.ok:
             pending = {
@@ -228,8 +230,10 @@ class Nodes:
                 f"{pipeline.spec_rel(draft.intent.feature_id)}/{p}"
                 for p in ("intent.yaml", "intent.md", "examples/**", "scenarios/**", "properties.yaml", "features/**")
             ]
-            self.s.agent(engine).run(
-                AgentRequest(role="driver_writer", prompt=prompt, workdir=workdir, protected=protected)
+            self.s.run_agent(
+                state["feature_key"],
+                engine,
+                AgentRequest(role="driver_writer", prompt=prompt, workdir=workdir, protected=protected),
             )
             result = pipeline.freeze(workdir, layout, state.get("approved_by") or "human")
             if result.ok:
@@ -271,8 +275,10 @@ class Nodes:
         workdir = Path(state["workdir"])
         intent = load_intent(SpecLayout(workdir / state["spec_rel"]))
         prompt = pipeline.planner_prompt(workdir, state["spec_rel"], state["stack"], state.get("repo_map", ""))
-        res = self.s.agent(state["engine"]).run(
-            AgentRequest(role="planner", prompt=prompt, workdir=workdir, read_only=True, schema=TaskGraph)
+        res = self.s.run_agent(
+            state["feature_key"],
+            state["engine"],
+            AgentRequest(role="planner", prompt=prompt, workdir=workdir, read_only=True, schema=TaskGraph),
         )
         if res.ok:
             graph: TaskGraph = res.data
@@ -367,8 +373,11 @@ class Nodes:
         report = VerificationReport.model_validate(ts["last_report"]) if ts.get("last_report") else None
         review = ReviewResult.model_validate(ts["review"]) if ts.get("review") else None
         prompt = pipeline.builder_prompt(task, ts["feature_id"], ts["stack"], report, review)
-        res = self.s.agent(ts["engine"]).run(
-            AgentRequest(role="builder", prompt=prompt, workdir=wt, protected=ts["protected"])
+        res = self.s.run_agent(
+            ts["feature_key"],
+            ts["engine"],
+            AgentRequest(role="builder", prompt=prompt, workdir=wt, protected=ts["protected"]),
+            task=task.id,
         )
         message = f"factory: {task.title}\n\nTask: {task.id}"
         if review is not None:
@@ -384,8 +393,11 @@ class Nodes:
         wt = Path(ts["worktree"])
         rnd = ts.get("review_round", 0)
         prompt = pipeline.reviewer_prompt(wt, task, ts["feature_id"], ts["base_sha"], ts.get("summary", ""), rnd)
-        res = self.s.agent(ts["engine"]).run(
-            AgentRequest(role="reviewer", prompt=prompt, workdir=wt, read_only=True, schema=ReviewResult)
+        res = self.s.run_agent(
+            ts["feature_key"],
+            ts["engine"],
+            AgentRequest(role="reviewer", prompt=prompt, workdir=wt, read_only=True, schema=ReviewResult),
+            task=task.id,
         )
         if not res.ok:
             self.s.events.emit(
@@ -424,8 +436,11 @@ class Nodes:
                     conflicts=conflicts,
                     tasks="\n".join(f"- {x['task_id']}: {x['summary'][:200]}" for x in results),
                 )
-                self.s.agent(state["engine"]).run(
-                    AgentRequest(role="resolver", prompt=prompt, workdir=workdir, protected=self._protected(state))
+                self.s.run_agent(
+                    state["feature_key"],
+                    state["engine"],
+                    AgentRequest(role="resolver", prompt=prompt, workdir=workdir, protected=self._protected(state)),
+                    task=r["task_id"],
                 )
                 pipeline.git(workdir, "add", "-A")
                 pipeline.git(workdir, "commit", "-q", "--no-edit", check=False)
@@ -441,6 +456,7 @@ class Nodes:
         """Hand the verify subgraph ONLY what it needs — a commit and the trust anchors."""
         ws = self.s.workspace(state["feature_key"])
         vs: VerifyState = {
+            "feature_key": state["feature_key"],
             "feature_id": state["feature_id"],
             "source_repo": state["workdir"],
             "commit": pipeline.head(Path(state["workdir"])),
@@ -491,8 +507,10 @@ class Nodes:
         prompt = pipeline.auditor_prompt(
             repo, SpecLayout(repo / vs["spec_rel"]), report, vs["freeze_sha"], Path(vs["verify_dir"]) / "out"
         )
-        res = self.s.agent(vs["engine"]).run(
-            AgentRequest(role="auditor", prompt=prompt, workdir=repo, read_only=True, schema=AuditResult)
+        res = self.s.run_agent(
+            vs.get("feature_key") or vs["feature_id"],
+            vs["engine"],
+            AgentRequest(role="auditor", prompt=prompt, workdir=repo, read_only=True, schema=AuditResult),
         )
         if res.ok:
             report.audit = res.data.findings
@@ -593,10 +611,12 @@ class Nodes:
             f"factory/{state['feature_key']}",
             state.get("base_branch", "main"),
         )
-        res = self.s.agent(state["engine"]).run(
+        res = self.s.run_agent(
+            state["feature_key"],
+            state["engine"],
             AgentRequest(
                 role="finisher", prompt=prompt, workdir=workdir, protected=self._protected(state), schema=FinishResult
-            )
+            ),
         )
         if pipeline.git(workdir, "status", "--porcelain"):
             pipeline.git(workdir, "reset", "-q", "--hard", "HEAD")

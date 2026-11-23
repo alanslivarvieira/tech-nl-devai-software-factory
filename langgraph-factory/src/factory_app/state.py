@@ -93,6 +93,7 @@ class TaskState(TypedDict, total=False):
 class VerifyState(TypedDict, total=False):
     """Inputs are the minimum needed to verify a commit from scratch; no transcript, no build logs."""
 
+    feature_key: str  # only used to attribute agent usage/events, never to read the build conversation
     feature_id: str
     source_repo: str
     commit: str

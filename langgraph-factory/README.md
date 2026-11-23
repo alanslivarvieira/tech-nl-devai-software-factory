@@ -30,6 +30,11 @@ git -C ../todo-app diff main...factory/<key>
 
 A plain folder without `.git` is imported as a fresh repository; nothing is written back to it.
 
+Add `--usage-report` to write a model/token report (`usage-report.json` + `.md`, one row per agent session,
+totals per role and model) to the feature workspace when the run ends, or `--usage-report <path>` to choose
+the location. Models and reasoning effort per node are set in `FACTORY_CONFIG`; see
+[docs/model-selection.md](docs/model-selection.md) for recommendations.
+
 Service (API on :8080, Postgres, optional Teams bot):
 
 ```bash
@@ -60,9 +65,9 @@ real PRs (otherwise the PR body is written to `workspaces/<feature>/PR.md`), and
 |---|---|---|
 | `DATABASE_URL` | — | Postgres checkpointer (in-memory when unset) |
 | `FACTORY_WORKSPACES` | `./workspaces` | clones, worktrees, verify checkouts |
-| `FACTORY_CONFIG` | — | YAML thresholds, see `factory.example.yaml` |
+| `FACTORY_CONFIG` | — | YAML thresholds and per-role `models:`, see `factory.example.yaml` and [docs/model-selection.md](docs/model-selection.md) |
 | `FACTORY_SANDBOX` / `FACTORY_SANDBOX_IMAGE` | `local` / `factory-sandbox:latest` | where agent CLIs run |
-| `FACTORY_<ENGINE>_BIN` / `FACTORY_<ENGINE>_ARGS` | — | override CLI binary / extra flags (e.g. `--model`) |
+| `FACTORY_<ENGINE>_BIN` / `FACTORY_<ENGINE>_ARGS` | — | override CLI binary / extra flags (per-role `models:` flags are appended after these) |
 | `FACTORY_SKILLS_DIR` | `../factory-skills` (source checkout) | APM-installed agent skills copied into every agent workdir |
 | `FACTORY_NOTIFY_URL` | — | webhook for every event |
 | `GITHUB_TOKEN` | — | push + open PRs on github.com |

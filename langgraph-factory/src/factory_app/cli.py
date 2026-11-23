@@ -3,6 +3,7 @@
     factory-run --repo ../my-service --request "add a personalised greeting"
     factory-run --fake greeter --repo examples/targets/python-greeter --request "personalised greeting" \
         --answers "trim yes, reject blanks, /engine claude" --answers /approve
+    factory-run --repo ../my-service --request "..." --usage-report        # + model/token report at the end
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ import time
 from itertools import cycle
 from pathlib import Path
 from typing import Any
+
+from factory_core.reports.usage import build_report, write_report
 
 from .config import Settings
 from .runtime import FactoryRuntime
@@ -269,6 +272,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fake", choices=["greeter"], help="use the scripted demo agent instead of a real CLI")
     ap.add_argument("--workspaces", type=Path)
     ap.add_argument("--answers", action="append", default=[], help="scripted replies, consumed in order")
+    ap.add_argument(
+        "--usage-report",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="when the run ends, write usage-report.json + .md (model and tokens per agent session); "
+        "default location is the feature workspace, or PATH (base name, .json/.md added)",
+    )
     a = ap.parse_args(argv)
 
     if a.fake:
@@ -278,6 +290,42 @@ def main(argv: list[str] | None = None) -> int:
     elif "FACTORY_WORKSPACES" not in os.environ:
         os.environ["FACTORY_WORKSPACES"] = tempfile.mkdtemp(prefix="factory-")
     rt = FactoryRuntime(Settings())
+    key = rt.start(request=a.request, repo_url=a.repo, base_branch=a.base, engine=a.engine)
+    try:
+        return drive(rt, key, list(a.answers))
+    finally:
+        if a.usage_report is not None:
+            write_usage_report(rt, key, a, Path(a.usage_report) if a.usage_report else None)
+
+
+def write_usage_report(rt: FactoryRuntime, key: str, a: argparse.Namespace, path: Path | None) -> None:
+    if rt.busy(key):  # interrupted (Ctrl+C) while an agent was running: report what has finished so far
+        print("\n(run interrupted; the usage report covers the agent sessions completed so far)")
+    try:
+        st = rt.status(key)
+    except Exception:  # the report must still be written
+        st = {}
+    meta = {
+        "feature_key": key,
+        "request": a.request,
+        "repo": a.repo,
+        "engine": st.get("engine") or a.engine or rt.settings.factory.default_engine,
+        "agent": f"fake:{a.fake}" if a.fake else "cli",
+        "status": st.get("status") or "unknown",
+        "iterations": st.get("iteration"),
+        "pr_url": st.get("pr_url"),
+    }
+    report = build_report(rt.services.usage.rows(key), meta)
+    json_path, md_path = write_report(path or rt.services.workspace(key) / "usage-report", report)
+    t = report["totals"]
+    print(
+        f"usage report: {md_path}  ({json_path.name}) — {t['sessions']} sessions, "
+        f"{t['input_tokens']:,} input / {t['output_tokens']:,} output tokens"
+    )
+
+
+def drive(rt: FactoryRuntime, key: str, answers: list[str]) -> int:
+    scripted = bool(answers)
     seen = 0
 
     def drain(key: str) -> None:
@@ -287,9 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             if e["kind"] not in ("questions", "approval_needed", "escalation"):
                 print(f"[{e['kind']}] {e['message']}")
 
-    key = rt.start(request=a.request, repo_url=a.repo, base_branch=a.base, engine=a.engine)
     wait_for_run(rt, key, drain)
-    answers = list(a.answers)
     while True:
         drain(key)
         st = rt.status(key)
@@ -300,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
             break
         show(st["waiting_for"])
         reply = answers.pop(0) if answers else input("\nyou> ")
-        if answers or a.answers:
+        if answers or scripted:
             print(f"\nyou> {reply}")
         rt.reply(key, {"text": reply})
         wait_for_run(rt, key, drain)

@@ -11,7 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from factory_core.agents import AgentRequest, ClaudeCodeRunner, CodexRunner, CopilotCliRunner, FakeAgentRunner
+from factory_core.agents import (
+    AgentRequest,
+    AgentResult,
+    ClaudeCodeRunner,
+    CodexRunner,
+    CopilotCliRunner,
+    FakeAgentRunner,
+)
 from factory_core.agents.base import extract_json, read_only
 from factory_core.models import GateResult, GrillTurn, TaskGraph, VerificationReport
 from factory_core.mutation.pymut import enumerate_mutants, mutated_source
@@ -230,6 +237,152 @@ def test_cli_argv_builders(tmp_path: Path):
     assert argv[:2] == ["codex", "exec"] and "read-only" in argv and argv[-1] == "-"
     argv, stdin = CopilotCliRunner().argv(req, pf, tmp_path / "last")
     assert argv[0] == "copilot" and "p.md" in argv[2] and stdin is None
+
+
+def test_cli_argv_passes_model_and_effort_per_engine(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FACTORY_COPILOT_ARGS", "--model from-env")
+    req = AgentRequest(role="grill", prompt="p", workdir=tmp_path, model="m1", effort="low")
+    pf = tmp_path / "p.md"
+    pf.write_text("PROMPT")
+    last = tmp_path / "x.last.txt"
+    claude, _ = ClaudeCodeRunner().argv(req, pf, last)
+    assert claude[-4:] == ["--model", "m1", "--effort", "low"]
+    codex, _ = CodexRunner().argv(req, pf, last)
+    assert "--json" in codex and codex[-5:] == ["--model", "m1", "-c", 'model_reasoning_effort="low"', "-"]
+    copilot, _ = CopilotCliRunner().argv(req, pf, last)
+    assert copilot[-4:] == ["--model", "m1", "--reasoning-effort", "low"]  # role config wins over env args
+    assert copilot[copilot.index("--usage-output-file") + 1] == str(tmp_path / "x.usage.json")
+    plain, _ = ClaudeCodeRunner().argv(AgentRequest(role="grill", prompt="p", workdir=tmp_path), pf, last)
+    assert "--model" not in plain and "--effort" not in plain
+
+
+def test_cli_usage_parsers(tmp_path: Path):
+    last = tmp_path / "x.last.txt"
+    claude = ClaudeCodeRunner().usage(
+        json.dumps(
+            {
+                "result": "ok",
+                "total_cost_usd": 0.02,
+                "modelUsage": {
+                    "claude-sonnet-5-5": {
+                        "inputTokens": 100,
+                        "outputTokens": 20,
+                        "cacheReadInputTokens": 5,
+                        "cacheCreationInputTokens": 7,
+                        "costUSD": 0.015,
+                    },
+                    "claude-haiku-5-5": {"inputTokens": 10, "outputTokens": 2, "costUSD": 0.005},
+                },
+            }
+        ),
+        last,
+    )
+    assert [(u.model, u.input_tokens, u.cache_write_tokens, u.cost_usd) for u in claude] == [
+        ("claude-sonnet-5-5", 100, 7, 0.015),
+        ("claude-haiku-5-5", 10, 0, 0.005),
+    ]
+    codex_out = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"t"}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":10,'
+            '"reasoning_output_tokens":3}}',
+            '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"final answer"}}',
+            '{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":5}}',
+        ]
+    )
+    [codex] = CodexRunner().usage(codex_out, last)
+    assert (codex.model, codex.input_tokens, codex.cache_read_tokens, codex.output_tokens, codex.reasoning_tokens) == (
+        None,
+        150,
+        40,
+        15,
+        3,
+    )
+    assert CodexRunner().parse(codex_out, last) == "final answer"  # no --output-last-message file
+    assert CopilotCliRunner().usage("", last) == []  # no usage file written (e.g. CLI crashed)
+    (tmp_path / "x.usage.json").write_text(
+        json.dumps(
+            {
+                "totalPremiumRequestCost": 0.33,
+                "modelMetrics": {
+                    "claude-haiku-4.5": {
+                        "requests": {"count": 1, "cost": 0.33},
+                        "usage": {
+                            "inputTokens": 19392,
+                            "outputTokens": 42,
+                            "cacheReadTokens": 0,
+                            "cacheWriteTokens": 19382,
+                            "reasoningTokens": 35,
+                        },
+                        "totalNanoAiu": 2444750000,
+                    }
+                },
+            }
+        )
+    )
+    [cop] = CopilotCliRunner().usage("", last)
+    assert (cop.model, cop.input_tokens, cop.reasoning_tokens, cop.premium_requests, cop.ai_credits) == (
+        "claude-haiku-4.5",
+        19392,
+        35,
+        0.33,
+        2.44475,
+    )
+
+
+def test_rejected_model_falls_back_to_cli_default_and_is_recorded(tmp_path: Path):
+    class PickyRunner(FakeAgentRunner):
+        def _invoke(self, req, prompt):
+            if req.model:
+                return AgentResult(ok=False, engine="fake", error=f'Error: Model "{req.model}" is not available.')
+            return super()._invoke(req, prompt)
+
+    runner = PickyRunner({"planner": lambda r: {"tasks": [{"id": "a", "title": "t", "description": "d"}]}})
+    req = AgentRequest(role="planner", prompt="plan", workdir=tmp_path, schema=TaskGraph, model="nope", effort="max")
+    res = runner.run(req)
+    assert res.ok and isinstance(res.data, TaskGraph)
+    assert [(s.model, s.ok, s.fallback) for s in res.sessions] == [("nope", False, False), (None, True, True)]
+    # an unrelated failure is not retried
+    broken = FakeAgentRunner({})
+    res = broken.run(AgentRequest(role="builder", prompt="p", workdir=tmp_path, model="m"))
+    assert not res.ok and len(res.sessions) == 1
+
+
+def test_usage_report_totals_per_role_and_model(tmp_path: Path):
+    from factory_core.agents import AgentSession, Usage
+    from factory_core.reports.usage import UsageLog, build_report, write_report
+
+    log = UsageLog()
+    log.record(
+        "f",
+        [
+            AgentSession(
+                "grill", "claude", "haiku", "low", True, 1.0, [Usage("claude-haiku-5-5", 100, 10, cost_usd=0.01)]
+            ),
+            AgentSession(
+                "builder",
+                "claude",
+                None,
+                None,
+                True,
+                2.0,
+                [Usage("claude-sonnet-5-5", 1000, 100, cost_usd=0.2), Usage("claude-haiku-5-5", 50, 5)],
+            ),
+        ],
+    )
+    log.record("f", [AgentSession("builder", "codex", "gpt-x", "high", False, 3.0, [Usage(None, 7, 1)])], task="t1")
+    report = build_report(log.rows("f"), {"feature_key": "f"})
+    assert report["totals"]["sessions"] == 3 and report["totals"]["input_tokens"] == 1157
+    assert report["totals"]["cost_usd"] == 0.21
+    assert report["by_role"]["builder"]["sessions"] == 2 and report["by_role"]["builder"]["output_tokens"] == 106
+    assert report["by_model"]["claude-haiku-5-5"]["input_tokens"] == 150
+    assert report["by_model"]["gpt-x (configured)"]["input_tokens"] == 7
+    assert report["sessions"][2]["task"] == "t1" and report["sessions"][2]["cost_usd"] is None
+    json_path, md_path = write_report(tmp_path / "out" / "usage.json", report)
+    assert json_path.name == "usage.json" and md_path.name == "usage.md"
+    assert json.loads(json_path.read_text())["totals"]["sessions"] == 3
+    md = md_path.read_text(encoding="utf-8")
+    assert "## By model" in md and "| builder |" in md and "gpt-x (configured)" in md
 
 
 def test_read_only_context_locks_and_restores(tmp_path: Path):

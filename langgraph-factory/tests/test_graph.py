@@ -70,6 +70,53 @@ def test_cli_shows_rotating_work_verbs(monkeypatch):
     assert rt.waited
 
 
+def test_cli_usage_report_uses_per_role_models(tmp_path, monkeypatch):
+    """`factory-run --usage-report` writes JSON + Markdown; models come from the `models:` config per role."""
+    import json
+
+    from factory_app import cli
+
+    config = tmp_path / "factory.yaml"
+    config.write_text(
+        "run_setup: false\nmax_mutants: 40\n"
+        "models:\n  codex:\n    builder: {model: big-model, effort: high}\n    grill: {model: small-model}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FACTORY_CONFIG", str(config))
+    monkeypatch.setenv("FACTORY_FAKE_AGENT", "greeter")
+    monkeypatch.setenv("FACTORY_WORKSPACES", str(tmp_path / "ws"))
+    code = cli.main(
+        [
+            "--fake",
+            "greeter",
+            "--repo",
+            str(GREETER_TARGET),
+            "--request",
+            "Add a personalised greeting",
+            "--engine",
+            "codex",
+            "--answers",
+            "trim yes, reject blanks",
+            "--answers",
+            "/approve",
+            "--usage-report",
+            str(tmp_path / "reports" / "run"),
+        ]
+    )
+    assert code == 0
+    report = json.loads((tmp_path / "reports" / "run.json").read_text(encoding="utf-8"))
+    rows = report["sessions"]
+    assert {r["role"] for r in rows} >= {"grill", "driver_writer", "planner", "builder", "reviewer", "finisher"}
+    assert all(
+        r["model"] == "big-model" and r["effort"] == "high" and r["task"] for r in rows if r["role"] == "builder"
+    )
+    assert all(r["model"] == "small-model" and r["effort"] is None for r in rows if r["role"] == "grill")
+    assert all(r["model"] == "fake-model" for r in rows if r["role"] == "planner")  # unconfigured: CLI default
+    assert report["meta"]["status"] == "pr_opened" and report["totals"]["input_tokens"] > 0
+    assert set(report["by_model"]) == {"big-model", "small-model", "fake-model"}
+    assert "## By role" in (tmp_path / "reports" / "run.md").read_text(encoding="utf-8")
+
+
 def test_happy_path_loops_until_green_and_opens_pr(tmp_path):
     agent = greeter_fake_agent(buggy_first=True)
     rt = runtime(tmp_path, agent)

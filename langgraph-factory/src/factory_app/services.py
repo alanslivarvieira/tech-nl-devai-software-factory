@@ -15,8 +15,9 @@ from typing import Any
 
 import httpx
 
-from factory_core.agents import AgentRunner, make_runner
+from factory_core.agents import AgentRequest, AgentResult, AgentRunner, make_runner
 from factory_core.pipeline import git
+from factory_core.reports.usage import UsageLog
 
 from .config import Settings
 from .sandbox import make_executor
@@ -105,11 +106,29 @@ class Services:
     githost: GitHost
     agent_factory: Callable[[str], AgentRunner]
     _agents: dict[str, AgentRunner] = field(default_factory=dict)
+    usage: UsageLog = field(default_factory=UsageLog)
 
     def agent(self, engine: str) -> AgentRunner:
         if engine not in self._agents:
             self._agents[engine] = self.agent_factory(engine)
         return self._agents[engine]
+
+    def run_agent(self, feature_key: str, engine: str, req: AgentRequest, task: str | None = None) -> AgentResult:
+        """Run one agent step with the model/effort configured for ``engine`` × ``req.role`` and record usage."""
+        choice = self.settings.factory.choice_for(engine, req.role)
+        req.model = req.model or choice.model
+        req.effort = req.effort or choice.effort
+        res = self.agent(engine).run(req)
+        self.usage.record(feature_key, res.sessions, task=task)
+        for s in res.sessions:
+            if s.fallback:
+                self.events.emit(
+                    feature_key,
+                    "warning",
+                    f"{engine} rejected model={choice.model} effort={choice.effort} for `{req.role}`; "
+                    "used the CLI default model instead",
+                )
+        return res
 
     def workspace(self, feature_key: str) -> Path:
         path = self.settings.workspaces / feature_key

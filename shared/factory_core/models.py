@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Engine = Literal["copilot", "claude", "codex"]
 ENGINES: tuple[str, ...] = ("copilot", "claude", "codex")
+AgentRole = Literal["grill", "driver_writer", "planner", "builder", "reviewer", "auditor", "resolver", "finisher"]
 
 
 class _Model(BaseModel):
@@ -272,6 +273,14 @@ class VerificationReport(_Model):
         return d
 
 
+class ModelChoice(_Model):
+    """Model + reasoning effort for one agent role. ``None`` = no flag is passed, the CLI default applies.
+    Values are passed through verbatim; a value the CLI rejects falls back to the CLI default (with a warning)."""
+
+    model: str | None = None
+    effort: str | None = None
+
+
 class FactoryConfig(_Model):
     """Thresholds live in the factory, never in the target repo, so agents cannot lower them."""
 
@@ -284,6 +293,11 @@ class FactoryConfig(_Model):
     gate_timeout_s: int = 900
     default_engine: Engine = "copilot"
     run_setup: bool = True
+    # engine -> agent role -> model/effort, e.g. {"claude": {"grill": {"model": "haiku", "effort": "low"}}}
+    models: dict[Engine, dict[AgentRole, ModelChoice]] = Field(default_factory=dict)
+
+    def choice_for(self, engine: str, role: str) -> ModelChoice:
+        return self.models.get(engine, {}).get(role) or ModelChoice()  # type: ignore[call-overload]
 
 
 class AuditResult(_Model):

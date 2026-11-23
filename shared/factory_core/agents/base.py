@@ -9,22 +9,36 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
+import re
 import stat
 import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from ..models import AgentRole
 from ..skills import deploy_skills, skill_globs
 from ..stack import glob_match
 
-Role = Literal["grill", "driver_writer", "planner", "builder", "reviewer", "auditor", "resolver", "finisher"]
+Role = AgentRole
 RUN_DIR = ".factory/run"
+log = logging.getLogger("factory.agents")
+
+# CLI error messages meaning "this model / effort value is not accepted", e.g. Copilot
+# 'Model "x" is not available', 'Model "x" does not support reasoning effort configuration'.
+MODEL_REJECTED = re.compile(
+    r"\bmodel\b[^\n]{0,160}?(is not available|not supported|does not support|does not exist|may not exist|"
+    r"not found|no access|unsupported|invalid)"
+    r"|(invalid|unknown|unsupported|unrecognized)[^\n]{0,40}\b(model|effort)\b"
+    r"|model_not_found|issue with the selected model",
+    re.I,
+)
 
 
 @dataclass
@@ -37,6 +51,38 @@ class AgentRequest:
     timeout_s: int = 1800
     schema: type[BaseModel] | None = None  # when set, the answer must be JSON valid for this model
     meta: dict[str, Any] = field(default_factory=dict)
+    model: str | None = None  # None = CLI default
+    effort: str | None = None  # reasoning effort; None = CLI default
+
+
+@dataclass
+class Usage:
+    """Token usage of one model within one session, as reported by the CLI (``model`` None = not reported)."""
+
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_usd: float | None = None  # Claude Code estimate
+    premium_requests: float | None = None  # Copilot
+    ai_credits: float | None = None  # Copilot
+
+
+@dataclass
+class AgentSession:
+    """One CLI invocation (a fresh agent session)."""
+
+    role: str
+    engine: str
+    model: str | None
+    effort: str | None
+    ok: bool
+    duration_s: float
+    usage: list[Usage] = field(default_factory=list)
+    fallback: bool = False  # rerun with the CLI default model after the configured model/effort was rejected
+    error: str = ""
 
 
 @dataclass
@@ -48,6 +94,8 @@ class AgentResult:
     exit_code: int = 0
     duration_s: float = 0.0
     error: str = ""
+    usage: list[Usage] = field(default_factory=list)
+    sessions: list[AgentSession] = field(default_factory=list)  # every invocation behind this result
 
 
 class Executor(Protocol):
@@ -172,14 +220,48 @@ class AgentRunner(ABC):
         prompt = req.prompt
         if req.schema is not None:
             prompt += JSON_SUFFIX.format(schema=json.dumps(req.schema.model_json_schema(), indent=1)[:12000])
+        sessions: list[AgentSession] = []
         with read_only(req.workdir, req.protected):
-            res = self._invoke(req, prompt)
+            res = self._session(req, prompt, sessions)
             if req.schema is not None and res.ok:
                 res = self._validate(req, res)
                 if not res.ok and "schema" in res.error:
                     retry = prompt + f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {res.error}\nAnswer again, JSON only."
-                    res = self._validate(req, self._invoke(req, retry))
+                    res = self._validate(req, self._session(req, retry, sessions))
+        res.sessions = sessions
         return res
+
+    def _session(self, req: AgentRequest, prompt: str, sessions: list[AgentSession]) -> AgentResult:
+        """Invoke once; if the CLI rejects the configured model/effort, warn and rerun with the CLI default
+        (the request is updated so a schema retry does not hit the same rejection)."""
+        res = self._invoke(req, prompt)
+        sessions.append(self._record(req, res))
+        if not res.ok and (req.model or req.effort) and MODEL_REJECTED.search(res.error or res.text):
+            log.warning(
+                "%s rejected model=%s effort=%s for role %s; retrying with the CLI default: %s",
+                self.engine,
+                req.model,
+                req.effort,
+                req.role,
+                (res.error or res.text).strip()[:300],
+            )
+            req.model = req.effort = None
+            res = self._invoke(req, prompt)
+            sessions.append(self._record(req, res, fallback=True))
+        return res
+
+    def _record(self, req: AgentRequest, res: AgentResult, fallback: bool = False) -> AgentSession:
+        return AgentSession(
+            role=req.role,
+            engine=res.engine,
+            model=req.model,
+            effort=req.effort,
+            ok=res.ok,
+            duration_s=res.duration_s,
+            usage=list(res.usage),
+            fallback=fallback,
+            error=res.error[:300],
+        )
 
     @staticmethod
     def _validate(req: AgentRequest, res: AgentResult) -> AgentResult:
