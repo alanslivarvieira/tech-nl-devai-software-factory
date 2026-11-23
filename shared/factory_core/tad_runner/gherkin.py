@@ -5,16 +5,26 @@
 * ``load_feature_cases`` executes any ``.feature`` written in the fixed step vocabulary below — generated
   or hand-written — through the same driver. Step definitions are factory-owned; agents cannot add any.
 
-Vocabulary (values are JSON literals; ``(absent)`` in a table omits the field)::
+Vocabulary. ``<op>`` is an interface operation. ``<fields>`` reads like ``title "buy milk"`` or
+``a 1, b 2 and c 3`` (JSON values; the last one may be bare text). Table cells hold JSON or bare text;
+``(absent)`` omits the field::
 
-    Given "<op>" was called [with:]          -- a call that must succeed
-    When I call "<op>" [with:]                -- the call under test
-    Then/And I query "<op>" [with:]           -- a follow-up call (state check)
-    Then the output is <json> | the output is:  (doc string JSON)
-    Then the output field "<dotted.path>" is <json>
-    Then the call fails with error <json-string>
-    Then the error contains <json-string>
-    Then the call succeeds
+    Given I called <op> [with <fields> | with:]              -- a call that must succeed
+    When I call <op> [with <fields> | with:]                 -- the call under test
+    Then it returns <json> | <fields>                        -- exact output
+    Then it returns:              (JSON doc string, or a table of rows)
+    Then it returns <field>:      (table of rows)
+    Then the result has <fields> | the result has:           -- only these output fields must match
+    Then the <dotted.field> is <value>
+    Then it fails with <message>
+    Then it fails with an error containing <text>
+    Then it succeeds
+    And <op> returns … | has … | fails with … | succeeds     -- follow-up call without input (state check)
+    And I query <op> [with <fields> | with:]                 -- follow-up call with input; assert with "it …"
+
+The original phrasing (``"<op>" was called``, ``I call "<op>"``, ``I query "<op>"``, ``the output is …``,
+``the output field "<path>" is …``, ``the call fails with error …``, ``the error contains …``,
+``the call succeeds``) is still accepted.
 """
 
 from __future__ import annotations
@@ -35,13 +45,89 @@ from .values import set_path
 
 ABSENT = "(absent)"
 GENERATED_SUFFIXES = (".table.feature", ".scenario.feature")
+INLINE_MAX = 90
+CONTAINING = "an error containing "
+_NAME = re.compile(r"^[A-Za-z_][\w.-]*$")
+_FIELD_NAME = re.compile(r"(?P<key>[A-Za-z_][\w.-]*) ")
+_SEP = re.compile(r"\s*,\s*|\s+and\s+")
+_DECODER = json.JSONDecoder()
+
+
+# ------------------------------------------------------------------------------------------- values
+def _lit(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except ValueError:
+        return MISSING
+
+
+def _bare(text: str) -> Any:
+    """Cell / trailing value: JSON if it parses, otherwise the text itself."""
+    value = _loads(text)
+    return text if value is MISSING else value
+
+
+def _is_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _soft(value: Any) -> str:
+    """Render a cell / trailing value; strings lose their quotes when that cannot change their meaning."""
+    if (
+        isinstance(value, str)
+        and value
+        and value == value.strip()
+        and "\n" not in value
+        and value != ABSENT
+        and not value.startswith('"')
+        and _loads(value) is MISSING
+        and _parse_fields(f"x {value}") == {"x": value}
+    ):
+        return value
+    return _lit(value)
+
+
+def _message(text: str) -> str:
+    if text and text == text.strip() and "\n" not in text and not text.startswith(('"', CONTAINING)):
+        return text
+    return _lit(text)
+
+
+def _unmessage(text: str) -> str:
+    if text.startswith('"') and isinstance(value := _loads(text), str):
+        return value
+    return text
+
+
+def _parse_fields(text: str) -> dict[str, Any] | None:
+    """``a 1, b "x" and c true`` -> {a: 1, b: "x", c: true}; None when the text is not a field list."""
+    out: dict[str, Any] = {}
+    pos = 0
+    while m := _FIELD_NAME.match(text, pos):
+        pos = m.end()
+        try:
+            value, end = _DECODER.raw_decode(text, pos)
+        except ValueError:
+            end = -1
+        if end == len(text):
+            set_path(out, m["key"], value)
+            return out
+        sep = _SEP.match(text, end) if end >= 0 else None
+        if sep is None:
+            raw = text[pos:]
+            if raw != ABSENT:
+                set_path(out, m["key"], _bare(raw))
+            return out
+        set_path(out, m["key"], value)
+        pos = sep.end()
+    return None
 
 
 # ------------------------------------------------------------------------------------------- render
-def _lit(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
 def _cell(text: str) -> str:
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "\\n")
 
@@ -50,10 +136,16 @@ def _flat(prefix: str, value: Any, out: dict[str, Any]) -> None:
     if isinstance(value, dict) and not value and not prefix:
         return
     if isinstance(value, dict) and value:
-        for k in sorted(value):
+        for k in value:
             _flat(f"{prefix}.{k}" if prefix else k, value[k], out)
     else:
         out[prefix] = value
+
+
+def _flatten(value: dict[str, Any]) -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    _flat("", value, flat)
+    return flat
 
 
 def _table(rows: list[list[str]], indent: str) -> list[str]:
@@ -61,50 +153,94 @@ def _table(rows: list[list[str]], indent: str) -> list[str]:
     return [indent + "| " + " | ".join(c.ljust(w) for c, w in zip(r, widths, strict=True)) + " |" for r in rows]
 
 
-def _call_lines(keyword: str, phrase: str, op: str, inp: dict[str, Any], indent: str) -> list[str]:
-    flat: dict[str, Any] = {}
-    _flat("", inp, flat)
-    if not flat:
-        return [f"{indent}{keyword} {phrase.format(op=op)}"]
-    lines = [f"{indent}{keyword} {phrase.format(op=op)} with:"]
-    lines += _table([[_cell(k), _cell(_lit(v))] for k, v in flat.items()], indent + "  ")
-    return lines
+def _inline(flat: dict[str, Any]) -> str | None:
+    if not flat or not all(_NAME.match(k) and _is_scalar(v) for k, v in flat.items()):
+        return None
+    parts = [f"{k} {_lit(v)}" for k, v in flat.items()]
+    text = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return text if len(text) <= INLINE_MAX else None
 
 
-def _assert_lines(e: Expect, indent: str, first_kw: str = "Then") -> list[str]:
-    kw = [first_kw]
+def _fields_table(flat: dict[str, Any], indent: str) -> list[str]:
+    return _table([[_cell(k), _cell(_soft(v))] for k, v in flat.items()], indent)
 
-    def k() -> str:
-        word = kw[0]
-        kw[0] = "And"
+
+def _records(value: Any) -> list[list[str]] | None:
+    """A list of flat objects as a table with a header row, or None."""
+    if not isinstance(value, list) or not value or not all(isinstance(r, dict) for r in value):
+        return None
+    flats = [_flatten(r) for r in value]
+    cols: list[str] = []
+    for f in flats:
+        for k, v in f.items():
+            if not _is_scalar(v):
+                return None
+            if k not in cols:
+                cols.append(k)
+    if not cols:
+        return None
+    return [[_cell(c) for c in cols]] + [[_cell(_soft(f[c])) if c in f else ABSENT for c in cols] for f in flats]
+
+
+class _Keyword:
+    """``Given``/``Then`` the first time, ``And`` afterwards."""
+
+    def __init__(self, first: str) -> None:
+        self.first, self.used = first, False
+
+    def __call__(self) -> str:
+        word = "And" if self.used else self.first
+        self.used = True
         return word
 
+
+def _call_lines(keyword: str, verb: str, op: str, inp: dict[str, Any], indent: str) -> list[str]:
+    flat = _flatten(inp)
+    head = f"{indent}{keyword} I {verb} {op}"
+    if not flat:
+        return [head]
+    if (text := _inline(flat)) is not None:
+        return [f"{head} with {text}"]
+    return [f"{head} with:"] + _fields_table(flat, indent + "  ")
+
+
+def _returns_lines(value: Any, head: str, indent: str) -> list[str]:
+    if isinstance(value, dict) and (text := _inline(_flatten(value))) is not None:
+        return [f"{head} {text}"]
+    if (rows := _records(value)) is not None:
+        return [f"{head}:"] + _table(rows, indent + "  ")
+    if isinstance(value, dict) and len(value) == 1:
+        ((key, inner),) = value.items()
+        if _NAME.match(key) and "." not in key and (rows := _records(inner)) is not None:
+            return [f"{head} {key}:"] + _table(rows, indent + "  ")
+    text = _lit(value)
+    if len(text) <= 80:
+        return [f"{head} {text}"]
+    body = json.dumps(value, ensure_ascii=False, indent=2).splitlines()
+    return [f"{head}:", f'{indent}  """json'] + [f"{indent}  {b}" for b in body] + [f'{indent}  """']
+
+
+def _assert_lines(e: Expect, op: str | None, kw: _Keyword, indent: str) -> list[str]:
+    """Assertion on the last call (``it …``) or, with ``op``, a follow-up call and its assertion in one step."""
+    it = op or "it"
     if e.error is not None:
-        return [f"{indent}{k()} the call fails with error {_lit(e.error)}"]
+        return [f"{indent}{kw()} {it} fails with {_message(e.error)}"]
     if e.error_contains is not None:
-        return [f"{indent}{k()} the error contains {_lit(e.error_contains)}"]
+        return [f"{indent}{kw()} {it} fails with {CONTAINING}{_message(e.error_contains)}"]
     if e.output is not MISSING:
-        text = _lit(e.output)
-        if len(text) <= 80:
-            return [f"{indent}{k()} the output is {text}"]
-        body = json.dumps(e.output, ensure_ascii=False, sort_keys=True, indent=2).splitlines()
-        return (
-            [f"{indent}{k()} the output is:", f'{indent}  """json']
-            + [f"{indent}  {b}" for b in body]
-            + [f'{indent}  """']
-        )
+        return _returns_lines(e.output, f"{indent}{kw()} {it} returns", indent)
     if e.output_subset is not None:
-        flat: dict[str, Any] = {}
-        _flat("", e.output_subset, flat)
-        return [f'{indent}{k()} the output field "{p}" is {_lit(v)}' for p, v in flat.items()]
-    return [f"{indent}{k()} the call succeeds"]
+        has = f"{op} has" if op else "the result has"
+        flat = _flatten(e.output_subset)
+        if (text := _inline(flat)) is not None:
+            return [f"{indent}{kw()} {has} {text}"]
+        return [f"{indent}{kw()} {has}:"] + _fields_table(flat, indent + "  ")
+    return [f"{indent}{kw()} {it} succeeds"]
 
 
 def _shape(case: Case) -> tuple[Any, ...]:
     step = case.steps[0]
     e = step.expect or Expect(no_error=True)
-    flat_in: dict[str, Any] = {}
-    _flat("", step.input, flat_in)
     if e.error is not None:
         kind: tuple[Any, ...] = ("error",)
     elif e.error_contains is not None:
@@ -112,9 +248,7 @@ def _shape(case: Case) -> tuple[Any, ...]:
     elif e.output is not MISSING:
         kind = ("output",)
     elif e.output_subset is not None:
-        flat_out: dict[str, Any] = {}
-        _flat("", e.output_subset, flat_out)
-        kind = ("subset", tuple(sorted(flat_out)))
+        kind = ("subset", tuple(_flatten(e.output_subset)))
     else:
         kind = ("ok",)
     return (step.op, kind, case.baseline)
@@ -130,74 +264,72 @@ def render_table_feature(cases: list[Case], title: str, source: str) -> str:
     for c in cases:
         groups[_shape(c)].append(c)
     for (op, kind, baseline), group in groups.items():
-        in_cols = sorted({k for c in group for k in _flat_keys(c.steps[0].input)})
-        tags = "  @existing" if baseline == "existing" else ""
-        if tags:
-            lines.append(tags)
-        label = {"error": "rejects", "error_contains": "rejects", "ok": "accepts"}.get(kind[0], "returns")
-        lines.append(f"  Scenario Outline: {op} {label} — <case>")
-        if in_cols:
-            lines.append(f'    When I call "{op}" with:')
-            lines += _table([[_cell(c), f"<in.{c}>"] for c in in_cols], "      ")
+        in_cols = list(dict.fromkeys(k for c in group for k in _flatten(c.steps[0].input)))
+        if kind[0] == "subset":
+            out_cols = list(kind[1])
         else:
-            lines.append(f'    When I call "{op}"')
+            out_cols = {"error": ["error"], "error_contains": ["error"], "output": ["output"]}.get(kind[0], [])
+        # Column headers double as placeholders; prefix them only when an input and an output share a name.
+        clash = len({"case", *in_cols, *out_cols}) != 1 + len(in_cols) + len(out_cols)
+        in_names = [f"in.{c}" if clash else c for c in in_cols]
+        out_names = [f"out.{c}" if clash and kind[0] == "subset" else c for c in out_cols]
+
+        if baseline == "existing":
+            lines.append("  @existing")
+        lines.append("  Scenario Outline: <case>")
+        if len(in_cols) == 1 and _NAME.match(in_cols[0]):
+            lines.append(f"    When I call {op} with {in_cols[0]} <{in_names[0]}>")
+        elif in_cols:
+            lines.append(f"    When I call {op} with:")
+            lines += _table([[_cell(c), f"<{n}>"] for c, n in zip(in_cols, in_names, strict=True)], "      ")
+        else:
+            lines.append(f"    When I call {op}")
         if kind[0] == "error":
-            lines.append("    Then the call fails with error <error>")
-            out_cols = ["error"]
+            lines.append(f"    Then it fails with <{out_names[0]}>")
         elif kind[0] == "error_contains":
-            lines.append("    Then the error contains <error_contains>")
-            out_cols = ["error_contains"]
+            lines.append(f"    Then it fails with {CONTAINING}<{out_names[0]}>")
         elif kind[0] == "output":
-            lines.append("    Then the output is <output>")
-            out_cols = ["output"]
+            lines.append(f"    Then it returns <{out_names[0]}>")
+        elif kind[0] == "subset" and all(_NAME.match(p) and p != "output" for p in out_cols):
+            for i, (p, n) in enumerate(zip(out_cols, out_names, strict=True)):
+                lines.append(f"    {'Then' if i == 0 else 'And'} the {p} is <{n}>")
         elif kind[0] == "subset":
-            out_cols = [f"out.{p}" for p in kind[1]]
-            for i, p in enumerate(kind[1]):
-                lines.append(f'    {"Then" if i == 0 else "And"} the output field "{p}" is <out.{p}>')
+            lines.append("    Then the result has:")
+            lines += _table([[_cell(p), f"<{n}>"] for p, n in zip(out_cols, out_names, strict=True)], "      ")
         else:
-            lines.append("    Then the call succeeds")
-            out_cols = []
+            lines.append("    Then it succeeds")
+
         by_ac: dict[str, list[Case]] = defaultdict(list)
         for c in group:
             by_ac[c.ac_id].append(c)
         for ac in sorted(by_ac):
             lines += ["", f"    @{ac}", "    Examples:"]
-            header = ["case"] + [f"in.{c}" for c in in_cols] + out_cols
-            rows = [header]
+            rows = [["case", *in_names, *out_names]]
             for c in by_ac[ac]:
                 rows.append(
                     [_cell(c.name)]
                     + [_cell(_example_in(c, col)) for col in in_cols]
-                    + [_cell(_example_out(c, col)) for col in out_cols]
+                    + [_cell(_example_out(c, kind[0], col)) for col in out_cols]
                 )
             lines += _table(rows, "      ")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _flat_keys(inp: dict[str, Any]) -> list[str]:
-    flat: dict[str, Any] = {}
-    _flat("", inp, flat)
-    return list(flat)
-
-
 def _example_in(c: Case, col: str) -> str:
-    flat: dict[str, Any] = {}
-    _flat("", c.steps[0].input, flat)
-    return _lit(flat[col]) if col in flat else ABSENT
+    flat = _flatten(c.steps[0].input)
+    return _soft(flat[col]) if col in flat else ABSENT
 
 
-def _example_out(c: Case, col: str) -> str:
+def _example_out(c: Case, kind: str, col: str) -> str:
     e = c.steps[0].expect or Expect()
-    if col == "error":
-        return _lit(e.error)
-    if col == "error_contains":
-        return _lit(e.error_contains)
-    if col == "output":
+    if kind == "error":
+        return _message(e.error or "")
+    if kind == "error_contains":
+        return _message(e.error_contains or "")
+    if kind == "output":
         return _lit(e.output)
-    flat: dict[str, Any] = {}
-    _flat("", e.output_subset or {}, flat)
-    return _lit(flat[col[4:]])
+    return _soft(_flatten(e.output_subset or {})[col])
 
 
 def render_scenario_feature(cases: list[Case], title: str, source: str) -> str:
@@ -206,25 +338,26 @@ def render_scenario_feature(cases: list[Case], title: str, source: str) -> str:
         f"Feature: {title}",
         "",
     ]
+    ind = "    "
     for c in cases:
         tags = [f"@{c.ac_id}"] + (["@existing"] if c.baseline == "existing" else [])
         lines += ["  " + " ".join(tags), f"  Scenario: {c.name}"]
+        given, then = _Keyword("Given"), _Keyword("Then")
         for s in c.steps:
+            e = s.expect or Expect(no_error=True)
             if s.phase == "given":
-                lines += _call_lines("Given", '"{op}" was called', s.op, s.input, "    ")
+                lines += _call_lines(given(), "called", s.op, s.input, ind)
             elif s.phase == "when":
-                lines += _call_lines("When", 'I call "{op}"', s.op, s.input, "    ")
-                if s.expect and s.expect.describe() != {"no_error": True}:
-                    lines += _assert_lines(s.expect, "    ")
+                lines += _call_lines("When", "call", s.op, s.input, ind)
+                if e.describe() != {"no_error": True}:
+                    lines += _assert_lines(e, None, then, ind)
+            elif _flatten(s.input) or s.op == "it":
+                lines += _call_lines(then(), "query", s.op, s.input, ind)
+                lines += _assert_lines(e, None, then, ind)
             else:
-                lines += _call_lines("And", 'I query "{op}"', s.op, s.input, "    ")
-                lines += _assert_lines(s.expect or Expect(no_error=True), "    ", first_kw="And")
-        if (
-            not any(s.phase == "then" for s in c.steps)
-            and c.steps[-1].expect
-            and c.steps[-1].expect.describe() == {"no_error": True}
-        ):
-            lines.append("    Then the call succeeds")
+                lines += _assert_lines(e, s.op, then, ind)
+        if not then.used:
+            lines.append(f"{ind}Then it succeeds")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -270,7 +403,20 @@ def features_in_sync(layout: SpecLayout, title: str) -> list[str]:
 
 
 # ------------------------------------------------------------------------------------------ execute
-_CALL = re.compile(r'^(?:"(?P<g>[^"]+)" was called|I call "(?P<w>[^"]+)"|I query "(?P<q>[^"]+)")(?P<with> with:)?$')
+_OP = r"[a-z_][a-z0-9_]*"
+_CALL = re.compile(rf"^I (?P<verb>called|call|query) (?P<op>{_OP})(?: with (?P<fields>.+)|(?P<table> with:))?$")
+_PHASE = {"called": "given", "call": "when", "query": "then"}
+_FOLLOW_UP = re.compile(rf"^(?P<op>{_OP}) (?P<rest>(?:returns|has)(?: .+|:)|fails with .+|succeeds)$")
+_RETURNS_KEY = re.compile(r"^it returns (?P<key>[A-Za-z_][\w.-]*):$")
+_RETURNS = re.compile(r"^it returns (?P<value>.+)$")
+_HAS = re.compile(r"^the result has (?P<fields>.+)$")
+_FAILS_CONTAINING = re.compile(rf"^it fails with {CONTAINING}(?P<msg>.+)$")
+_FAILS = re.compile(r"^it fails with (?P<msg>.+)$")
+_IS = re.compile(r"^the (?P<path>[A-Za-z_][\w.-]*) is (?P<value>.+)$")
+
+_LEGACY_CALL = re.compile(
+    r'^(?:"(?P<g>[^"]+)" was called|I call "(?P<w>[^"]+)"|I query "(?P<q>[^"]+)")(?P<table> with:)?$'
+)
 _OUT = re.compile(r"^the output is (?P<json>.+)$")
 _OUT_DOC = re.compile(r"^the output is:$")
 _FIELD = re.compile(r'^the output field "(?P<path>[^"]+)" is (?P<json>.+)$')
@@ -286,6 +432,114 @@ def _json(text: str, where: str) -> Any:
         raise SpecError(f"{where}: value is not a JSON literal: {text!r}") from exc
 
 
+def _table_rows(arg: dict[str, Any]) -> list[list[str]] | None:
+    rows = (arg.get("dataTable") or {}).get("rows")
+    return [[c["value"] for c in r["cells"]] for r in rows] if rows else None
+
+
+def _read_fields(rows: list[list[str]], where: str) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for cells in rows:
+        if len(cells) != 2:
+            raise SpecError(f"{where}: field tables have exactly two columns (field | value)")
+        if cells[1] != ABSENT:
+            set_path(out, cells[0], _bare(cells[1]))
+    return out
+
+
+def _read_records(rows: list[list[str]]) -> list[dict[str, Any]]:
+    header, *body = rows
+    records = []
+    for cells in body:
+        rec: dict[str, Any] = {}
+        for k, v in zip(header, cells, strict=True):
+            if v != ABSENT:
+                set_path(rec, k, _bare(v))
+        records.append(rec)
+    return records
+
+
+def _fields(text: str, where: str) -> dict[str, Any]:
+    parsed = _parse_fields(text)
+    if parsed is None:
+        raise SpecError(f"{where}: cannot read fields from {text!r} (expected e.g. `name \"Joe\" and age 3`)")
+    return parsed
+
+
+def _call_step(text: str, arg: dict[str, Any], where: str) -> Step | None:
+    if m := _LEGACY_CALL.match(text):
+        op = m["g"] or m["w"] or m["q"]
+        phase = "given" if m["g"] else "when" if m["w"] else "then"
+        inline = None
+    elif m := _CALL.match(text):
+        op, phase, inline = m["op"], _PHASE[m["verb"]], m["fields"]
+    else:
+        return None
+    inp: dict[str, Any] = {}
+    if m["table"]:
+        rows = _table_rows(arg)
+        if not rows:
+            raise SpecError(f"{where}: '{text}' needs a data table")
+        inp = _read_fields(rows, where)
+    elif inline:
+        inp = _fields(inline, where)
+    return Step(op=op, input=inp, expect=Expect(no_error=True), phase=phase)  # type: ignore[arg-type]
+
+
+def _merge(subset: dict[str, Any] | None, fields: dict[str, Any]) -> dict[str, Any]:
+    out = subset or {}
+    for path, value in _flatten(fields).items():
+        set_path(out, path, value)
+    return out
+
+
+def _apply_assertion(text: str, arg: dict[str, Any], e: Expect, where: str) -> None:
+    doc = (arg.get("docString") or {}).get("content")
+    rows = _table_rows(arg)
+    if _OUT_DOC.match(text):
+        if doc is None:
+            raise SpecError(f"{where}: 'the output is:' needs a doc string")
+        e.output = _json(doc, where)
+    elif mm := _OUT.match(text):
+        e.output = _json(mm["json"], where)
+    elif mm := _FIELD.match(text):
+        e.output_subset = _merge(e.output_subset, {mm["path"]: _json(mm["json"], where)})
+    elif mm := _ERR.match(text):
+        e.error = _json(mm["json"], where)
+    elif mm := _ERR_IN.match(text):
+        e.error_contains = _json(mm["json"], where)
+    elif _OK.match(text) or text == "it succeeds":
+        e.no_error = True
+    elif text == "it returns:":
+        if doc is not None:
+            e.output = _json(doc, where)
+        elif rows:
+            e.output = _read_records(rows)
+        else:
+            raise SpecError(f"{where}: 'it returns:' needs a JSON doc string or a table")
+    elif rows and (mm := _RETURNS_KEY.match(text)):
+        out: dict[str, Any] = {}
+        set_path(out, mm["key"], _read_records(rows))
+        e.output = out
+    elif mm := _RETURNS.match(text):
+        value = _loads(mm["value"])
+        e.output = _fields(mm["value"], where) if value is MISSING else value
+    elif text == "the result has:":
+        if not rows:
+            raise SpecError(f"{where}: 'the result has:' needs a table")
+        e.output_subset = _merge(e.output_subset, _read_fields(rows, where))
+    elif mm := _HAS.match(text):
+        e.output_subset = _merge(e.output_subset, _fields(mm["fields"], where))
+    elif mm := _FAILS_CONTAINING.match(text):
+        e.error_contains = _unmessage(mm["msg"])
+    elif mm := _FAILS.match(text):
+        e.error = _unmessage(mm["msg"])
+    elif mm := _IS.match(text):
+        e.output_subset = _merge(e.output_subset, {mm["path"]: _bare(mm["value"])})
+    else:
+        raise SpecError(f"{where}: step not in the factory vocabulary: '{text}'")
+
+
 def _pickle_to_case(pickle: dict[str, Any], suite: str, source: str) -> Case:
     where = f"{source}:{pickle['name']}"
     steps: list[Step] = []
@@ -293,23 +547,12 @@ def _pickle_to_case(pickle: dict[str, Any], suite: str, source: str) -> Case:
     for st in pickle["steps"]:
         text = st["text"].strip()
         arg = st.get("argument") or {}
-        m = _CALL.match(text)
-        if m:
-            op = m.group("g") or m.group("w") or m.group("q")
-            phase = "given" if m.group("g") else "when" if m.group("w") else "then"
-            inp: dict[str, Any] = {}
-            if m.group("with"):
-                rows = (arg.get("dataTable") or {}).get("rows") or []
-                if not rows:
-                    raise SpecError(f"{where}: '{text}' needs a data table")
-                for row in rows:
-                    cells = [c["value"] for c in row["cells"]]
-                    if len(cells) != 2:
-                        raise SpecError(f"{where}: input tables have exactly two columns (field | json)")
-                    if cells[1] != ABSENT:
-                        set_path(inp, cells[0], _json(cells[1], where))
-            steps.append(Step(op=op, input=inp, expect=Expect(no_error=True), phase=phase))  # type: ignore[arg-type]
+        if call := _call_step(text, arg, where):
+            steps.append(call)
             continue
+        if (m := _FOLLOW_UP.match(text)) and m["op"] != "it":
+            steps.append(Step(op=m["op"], input={}, expect=Expect(no_error=True), phase="then"))
+            text = ("the result " if m["rest"].startswith("has") else "it ") + m["rest"]
         if not steps:
             raise SpecError(f"{where}: assertion '{text}' before any call")
         last = steps[-1]
@@ -317,25 +560,7 @@ def _pickle_to_case(pickle: dict[str, Any], suite: str, source: str) -> Case:
             raise SpecError(f"{where}: assertions must follow a When/query call, not a Given")
         e = last.expect if id(last) in asserted and last.expect else Expect()
         asserted.add(id(last))
-        if mm := _OUT_DOC.match(text):
-            doc = (arg.get("docString") or {}).get("content")
-            if doc is None:
-                raise SpecError(f"{where}: 'the output is:' needs a doc string")
-            e.output = _json(doc, where)
-        elif mm := _OUT.match(text):
-            e.output = _json(mm.group("json"), where)
-        elif mm := _FIELD.match(text):
-            subset = e.output_subset or {}
-            set_path(subset, mm.group("path"), _json(mm.group("json"), where))
-            e.output_subset = subset
-        elif mm := _ERR.match(text):
-            e.error = _json(mm.group("json"), where)
-        elif mm := _ERR_IN.match(text):
-            e.error_contains = _json(mm.group("json"), where)
-        elif _OK.match(text):
-            e.no_error = True
-        else:
-            raise SpecError(f"{where}: step not in the factory vocabulary: '{text}'")
+        _apply_assertion(text, arg, e, where)
         last.expect = e
     if not asserted:
         raise SpecError(f"{where}: scenario has no assertion (Then step) — not allowed")

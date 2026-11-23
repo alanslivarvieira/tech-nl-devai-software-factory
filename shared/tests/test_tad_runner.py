@@ -9,7 +9,12 @@ import pytest
 from factory_core import pipeline
 from factory_core.tad_runner.compare import check
 from factory_core.tad_runner.drivers import CallResult
-from factory_core.tad_runner.gherkin import parse_feature, render_table_feature, write_features
+from factory_core.tad_runner.gherkin import (
+    parse_feature,
+    render_scenario_feature,
+    render_table_feature,
+    write_features,
+)
 from factory_core.tad_runner.loader import SpecError, parse_scenarios, parse_table
 from factory_core.tad_runner.model import MISSING, Expect
 from factory_core.tad_runner.runner import freeze_check, run, validate
@@ -125,6 +130,97 @@ def test_gherkin_rejects_unknown_vocabulary_and_missing_assertions():
     no_then = 'Feature: f\n  @AC-1\n  Scenario: s\n    When I call "greet"\n'
     with pytest.raises(SpecError, match="no assertion"):
         parse_feature(no_then, "f", "f.feature")
+
+
+SCENARIOS = """suite: todo
+cases:
+  - name: toggling marks a todo as done
+    ac_id: AC-2
+    given:
+      - {op: add, input: {title: buy milk}}
+      - {op: add, input: {title: walk the dog}}
+    when: {op: toggle, input: {title: buy milk}}
+    then:
+      output: {title: buy milk, done: true}
+      state:
+        - op: list
+          output: {items: [{title: buy milk, done: true}, {title: walk the dog, done: false}]}
+        - {op: remaining, output: {count: 1}}
+  - name: toggling twice reactivates the todo
+    ac_id: AC-2
+    given: [{op: add, input: {title: buy milk, tags: [home, 1]}}]
+    when: {op: toggle, input: {title: buy milk}}
+    then:
+      output_subset: {done: false, meta: {by: "  me  "}}
+      state:
+        - {op: find, input: {title: buy milk}, output: [{title: buy milk}, {}]}
+  - name: unknown todo is rejected
+    ac_id: AC-4
+    when: {op: toggle, input: {title: '42'}}
+    then:
+      error: 'No todo titled "42"'
+      state: [{op: remaining, error_contains: "an error containing x"}]
+  - name: clearing succeeds
+    ac_id: AC-5
+    when: {op: clear}
+    then: {no_error: true}
+"""
+
+
+def test_gherkin_scenarios_read_fluently():
+    feature = render_scenario_feature(parse_scenarios(SCENARIOS, "todo"), "Todos", "scenarios/todo.yaml")
+    assert (
+        "  Scenario: toggling marks a todo as done\n"
+        '    Given I called add with title "buy milk"\n'
+        '    And I called add with title "walk the dog"\n'
+        '    When I call toggle with title "buy milk"\n'
+        '    Then it returns title "buy milk" and done true\n'
+        "    And list returns items:\n"
+        "      | title        | done  |\n"
+        "      | buy milk     | true  |\n"
+        "      | walk the dog | false |\n"
+        "    And remaining returns count 1\n"
+    ) in feature
+    assert '    When I call clear\n    Then it succeeds\n' in feature
+
+
+def test_gherkin_scenarios_roundtrip_preserves_semantics():
+    cases = parse_scenarios(SCENARIOS, "todo")
+    back = {c.name: c for c in parse_feature(render_scenario_feature(cases, "T", "s.yaml"), "todo", "s.feature")}
+    for c in cases:
+        g = back[c.name]
+        assert g.ac_id == c.ac_id
+        assert [(s.op, s.input, s.phase) for s in g.steps] == [(s.op, s.input, s.phase) for s in c.steps]
+        assert [s.expect.describe() for s in g.steps] == [s.expect.describe() for s in c.steps]
+
+
+def test_gherkin_table_reads_fluently():
+    feature = render_table_feature(parse_table(TABLE, suite="greet"), "Greeting", "examples/greet.csv")
+    assert "    Then it fails with <error>\n" in feature
+    assert '| blank    | " "  | Name must not be entirely whitespace |' in feature
+    single = "case,ac_id,in.name,out.greeting\nnamed,AC-2,Joe,\"Hello, Joe!\"\n"
+    feature = render_table_feature(parse_table(single, suite="greet"), "Greeting", "examples/greet.csv")
+    assert "    When I call greet with name <name>\n    Then the greeting is <greeting>\n" in feature
+    assert "| named | Joe  | Hello, Joe! |" in feature
+
+
+def test_gherkin_hand_written_steps():
+    text = """Feature: f
+  @AC-1
+  Scenario: s
+    Given I called add with:
+      | title | buy milk |
+      | due   | (absent) |
+    When I call find with title "buy milk", limit 2 and open true
+    Then the result has count 1
+    And the first.title is buy milk
+    And it fails with an error containing nothing
+"""
+    (case,) = parse_feature(text, "f", "f.feature")
+    assert case.steps[0].input == {"title": "buy milk"}
+    assert case.steps[1].input == {"title": "buy milk", "limit": 2, "open": True}
+    assert case.steps[1].expect.output_subset == {"count": 1, "first": {"title": "buy milk"}}
+    assert case.steps[1].expect.error_contains == "nothing"
 
 
 # ----------------------------------------------------------------------------------------- execution

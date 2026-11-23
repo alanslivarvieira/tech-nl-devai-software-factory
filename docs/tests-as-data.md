@@ -73,6 +73,39 @@ Hypothesis generates inputs, the driver executes them — property-based testing
 The runner also executes `.feature` files written in the fixed step vocabulary, so humans can add BDD
 scenarios by hand. `tad validate` fails if a generated feature drifts from its data file.
 
+The vocabulary reads as plain sentences: operations are unquoted, inputs are inline (`with title "buy milk"`),
+follow-up state checks are a single line, and lists of objects become tables:
+
+```gherkin
+  @AC-2
+  Scenario: toggling marks a todo as done
+    Given I called add with title "buy milk"
+    And I called add with title "walk the dog"
+    When I call toggle with title "buy milk"
+    Then it returns title "buy milk" and done true
+    And list returns items:
+      | title        | done  |
+      | buy milk     | true  |
+      | walk the dog | false |
+    And remaining returns count 1
+```
+
+| Step | Meaning |
+|---|---|
+| `Given I called <op> [with <fields> \| with:]` | setup call that must succeed |
+| `When I call <op> [with <fields> \| with:]` | the call under test |
+| `Then it returns <json> \| <fields> \| :` | exact output (inline, JSON doc string or table of rows) |
+| `Then it returns <field>:` | exact output `{field: [rows…]}` |
+| `Then the result has <fields> \| :` / `Then the <field> is <value>` | only these fields must match |
+| `Then it fails with <message>` / `… with an error containing <text>` | exact / partial error |
+| `Then it succeeds` | no error |
+| `And <op> returns … \| has … \| fails with … \| succeeds` | follow-up call (state check) |
+| `And I query <op> with …` then `And it …` | follow-up call that needs input |
+
+`<fields>` is `a 1, b "x" and c true` (JSON values; the last value may be bare text). Table cells hold JSON
+or bare text (`buy milk`, `true`, `"  padded  "`); `(absent)` omits the field. The older phrasing
+(`I call "<op>"`, `the output is …`, `the call fails with error …`) is still accepted.
+
 ## The driver protocol
 
 ```
