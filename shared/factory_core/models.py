@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Engine = Literal["copilot", "claude", "codex"]
 ENGINES: tuple[str, ...] = ("copilot", "claude", "codex")
-AgentRole = Literal["grill", "driver_writer", "planner", "builder", "reviewer", "auditor", "resolver", "finisher"]
+AgentRole = Literal[
+    "grill", "story_critic", "driver_writer", "planner", "builder", "reviewer", "auditor", "resolver", "finisher"
+]
 
 
 class _Model(BaseModel):
@@ -126,11 +128,12 @@ class GrillQuestion(_Model):
     recommendation: str = Field(default="", description="Your recommended answer and why")
 
     def render(self, number: int) -> str:
+        """Markdown that keeps one option per line in Teams too (Teams joins plain lines; list items survive)."""
         head = f"**Q{number}** - **{self.title}**: {self.body}" if self.title else f"**Q{number}** - {self.body}"
         lines = [f"{number}. {head}"]
-        lines += [f"   {o.key}) {o.label}" for o in self.options]
+        lines += [f"   - **{o.key})** {o.label}" for o in self.options]
         if self.recommendation:
-            lines.append(f"   ➡️ Recommended: {self.recommendation}")
+            lines.append(f"   - ➡️ Recommended: {self.recommendation}")
         return "\n".join(lines)
 
 
@@ -302,6 +305,17 @@ class FactoryConfig(_Model):
 
 class AuditResult(_Model):
     findings: list[AuditFinding] = Field(default_factory=list)
+
+
+class StoryFinding(_Model):
+    scenario: str = Field(description="name of the scenario case")
+    problem: str = Field(description="what the story says that the data does not check, or the other way round")
+
+
+class StoryCheck(_Model):
+    """Story critic: does each scenario's plain-English story say exactly what its test data checks?"""
+
+    findings: list[StoryFinding] = Field(default_factory=list)
 
 
 class ReviewFinding(_Model):

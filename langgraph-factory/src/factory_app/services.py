@@ -55,12 +55,19 @@ class EventLog:
             except httpx.HTTPError as exc:  # notification must never break the factory
                 log.warning("notify %s failed: %s", url, exc)
 
+    def _from(self, feature_key: str, seq: int) -> int:
+        # The log is in memory: after an app restart a client's cursor can be ahead of it; replay from the start
+        # rather than waiting forever for numbers the new log has not reached.
+        return 0 if seq > len(self._events[feature_key]) else seq
+
     def since(self, feature_key: str, seq: int = 0) -> list[dict[str, Any]]:
         with self._cond:
+            seq = self._from(feature_key, seq)
             return [e for e in self._events[feature_key] if e["seq"] > seq]
 
     def wait(self, feature_key: str, seq: int, timeout: float) -> list[dict[str, Any]]:
         with self._cond:
+            seq = self._from(feature_key, seq)
             self._cond.wait_for(lambda: len(self._events[feature_key]) > seq, timeout=timeout)
             return [e for e in self._events[feature_key] if e["seq"] > seq]
 
@@ -155,10 +162,18 @@ class Services:
         )
 
 
+GITHUB_SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
+
+
 def normalize_repo_url(repo_url: str) -> str:
-    """Make local paths absolute so later steps (clone, verify, PR) do not depend on the working directory."""
+    """Make local paths absolute so later steps (clone, verify, PR) do not depend on the working directory,
+    and expand the chat shorthand ``owner/repo`` to its github.com clone URL."""
     src = Path(repo_url)
-    return str(src.resolve()) if src.exists() else repo_url
+    if src.exists():
+        return str(src.resolve())
+    if GITHUB_SHORTHAND.match(repo_url):
+        return f"https://github.com/{repo_url.removesuffix('.git')}.git"
+    return repo_url
 
 
 def local_git_repo(repo_url: str) -> Path | None:

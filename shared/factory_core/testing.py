@@ -6,6 +6,7 @@ CLI, so the whole pipeline (grill → freeze → plan → build ⇄ verify → P
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,10 @@ from .models import SpecDraft
 from .spec import files_to_draft
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GREETER_TARGET = REPO_ROOT / "examples" / "targets" / "python-greeter"
-GREETER_SPEC = REPO_ROOT / "examples" / "specs" / "personalised-greeting"
+# Installed as a package (e.g. in the Docker image) the source-relative path doesn't exist; point here instead.
+EXAMPLES_DIR = Path(os.environ.get("FACTORY_EXAMPLES_DIR") or REPO_ROOT / "examples")
+GREETER_TARGET = EXAMPLES_DIR / "targets" / "python-greeter"
+GREETER_SPEC = EXAMPLES_DIR / "specs" / "personalised-greeting"
 
 GREETER_GOOD = '''"""Tiny sample service used to demo and end-to-end test the software factory."""
 
@@ -179,6 +182,7 @@ def greeter_fake_agent(buggy_first: bool = True) -> FakeAgentRunner:
     return FakeAgentRunner(
         {
             "grill": [grill_questions, grill_draft],
+            "story_critic": lambda req: {"findings": []},
             "driver_writer": driver,
             "planner": plan,
             "builder": builds,

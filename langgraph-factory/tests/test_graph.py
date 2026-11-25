@@ -14,7 +14,7 @@ from factory_app.api.server import create_app
 from factory_app.config import Settings
 from factory_app.runtime import FactoryRuntime
 from factory_app.sandbox import DockerExecutor
-from factory_app.services import GitHost
+from factory_app.services import GitHost, normalize_repo_url
 from factory_core.agents import AgentRequest
 from factory_core.models import FactoryConfig
 from factory_core.testing import GREETER_TARGET, greeter_fake_agent
@@ -153,6 +153,100 @@ def test_grill_is_read_only_and_engine_choice_sticks(tmp_path):
     assert "1A, 2B" in grill[1].prompt
 
 
+def _draft_with_story(then: str):
+    def grill(req: AgentRequest) -> dict:
+        from factory_core.testing import greeter_draft
+
+        draft = greeter_draft(req.meta.get("repo_url")).model_dump()
+        draft["scenarios"] = {
+            "greet.yaml": "cases:\n  - name: Ann is greeted\n    ac_id: AC-2\n"
+            f"    story: {{when: Ann asks for a greeting., then: ['{then}']}}\n"
+            "    when: {op: greet, input: {name: Ann}}\n    then: {output: {greeting: 'Hello, Ann!'}}\n"
+        }
+        return {"status": "draft", "draft": draft, "notes": "greeting"}
+
+    return grill
+
+
+def test_story_critic_sends_mismatching_stories_back_to_the_grill(tmp_path):
+    agent = greeter_fake_agent(buggy_first=False)
+    questions = agent.script["grill"][0]
+    wrong, right = _draft_with_story("She sees “Hi Ann”."), _draft_with_story("She sees “Hello, Ann!”.")
+    agent.script["grill"] = [questions, wrong, right]
+    agent.script["story_critic"] = [
+        lambda req: {"findings": [{"scenario": "Ann is greeted", "problem": "the data checks “Hello, Ann!”"}]},
+        lambda req: {"findings": []},
+    ]
+    rt = runtime(tmp_path, agent)
+    key = rt.start(request="Add a personalised greeting", repo_url=str(GREETER_TARGET), wait=True)
+    rt.reply(key, {"text": "yes"}, wait=True)
+
+    grill = agent.calls_for("grill")
+    assert len(grill) == 3 and "the data checks “Hello, Ann!”" in grill[2].prompt
+    assert "Hi Ann" in agent.calls_for("story_critic")[0].prompt
+    pending = rt.status(key)["waiting_for"]
+    assert pending["type"] == "approval" and pending["problems"] == []
+    rt.reply(key, {"text": "abort"}, wait=True)
+
+
+def test_event_log_replays_when_a_client_cursor_is_ahead_after_a_restart():
+    from factory_app.services import EventLog
+
+    log = EventLog()
+    log.emit("k", "a", "first")
+    log.emit("k", "b", "second")
+    assert [e["seq"] for e in log.since("k", 9)] == [1, 2], "a cursor from before the restart replays the new log"
+    assert [e["seq"] for e in log.since("k", 1)] == [2] and log.since("k", 2) == []
+    assert [e["seq"] for e in log.wait("k", 9, timeout=0.1)] == [1, 2]
+
+
+def test_a_step_that_errors_can_be_retried_or_aborted(tmp_path, monkeypatch):
+    from factory_core import pipeline
+
+    real_freeze, calls = pipeline.freeze, []
+
+    def flaky_freeze(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("boom")
+        return real_freeze(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "freeze", flaky_freeze)
+    rt = runtime(tmp_path, greeter_fake_agent(buggy_first=False))
+    key = drive(rt, ["ok"])
+    rt.reply(key, {"text": "/approve", "user": "alan"}, wait=True)
+    assert rt.status(key)["error"] == "ValueError: boom" and rt.status(key)["stopped"]
+
+    # through the HTTP API, as the Teams bot sends it
+    client = TestClient(create_app(rt))
+    assert client.post(f"/features/{key}/messages", json={"text": "retry"}).status_code == 202
+    rt.wait(key)
+    st = rt.status(key)
+    assert st["error"] is None and st["status"] == "pr_opened", st
+    assert "retry" in [e["kind"] for e in rt.services.events.since(key)]
+
+    calls.clear()
+    key = drive(rt, ["ok"])
+    rt.reply(key, {"text": "/approve", "user": "alan"}, wait=True)
+    rt.reply(key, {"action": "abort"}, wait=True)
+    last = rt.services.events.since(key)[-1]
+    assert last["kind"] == "aborted" and last["data"]["terminal"] is True and len(calls) == 1
+
+
+def test_failing_story_critic_still_presents_the_draft_with_a_warning(tmp_path):
+    agent = greeter_fake_agent(buggy_first=False)
+    agent.script["grill"] = [agent.script["grill"][0], _draft_with_story("She sees “Hello, Ann!”.")]
+    del agent.script["story_critic"]
+    rt = runtime(tmp_path, agent)
+    key = rt.start(request="Add a personalised greeting", repo_url=str(GREETER_TARGET), wait=True)
+    rt.reply(key, {"text": "yes"}, wait=True)
+
+    pending = rt.status(key)["waiting_for"]
+    assert pending["type"] == "approval" and "could not be checked" in pending["problems"][0]
+    assert len(agent.calls_for("grill")) == 2
+    rt.reply(key, {"text": "abort"}, wait=True)
+
+
 def test_intent_markdown_is_available_before_approval(tmp_path):
     rt = runtime(tmp_path, greeter_fake_agent(buggy_first=False))
     key = rt.start(request="Add a personalised greeting", repo_url=str(GREETER_TARGET), wait=True)
@@ -185,6 +279,10 @@ def test_cheating_builder_is_caught_and_escalated(tmp_path):
     assert integrity["status"] == "fail" and "protected-path" in integrity["details"]
     rt.reply(key, {"text": "abort"}, wait=True)
     assert rt.status(key)["status"] == "aborted"
+    last = rt.services.events.since(key)[-1]
+    assert last["kind"] == "aborted" and last["data"]["terminal"] is True, "the chat must learn the feature ended"
+    client = TestClient(create_app(rt))
+    assert client.post(f"/features/{key}/messages", json={"text": "hello"}).status_code == 410
 
 
 def test_stall_breaker_then_continue(tmp_path):
@@ -331,3 +429,16 @@ def test_docker_executor_mounts_contract_read_only(tmp_path):
 )
 def test_github_slug(url, slug):
     assert GitHost.github_slug(url) == slug
+
+
+@pytest.mark.parametrize(
+    "repo,expected",
+    [
+        ("acme/shop", "https://github.com/acme/shop.git"),
+        ("acme/shop.git", "https://github.com/acme/shop.git"),
+        ("https://github.com/acme/shop", "https://github.com/acme/shop"),
+        ("/no/such/path", "/no/such/path"),
+    ],
+)
+def test_normalize_repo_url_expands_github_shorthand(repo, expected):
+    assert normalize_repo_url(repo) == expected

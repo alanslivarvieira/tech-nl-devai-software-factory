@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from factory_channels.backend import FactoryEvent, GhAwBackend, LangGraphBackend, request_body
-from factory_channels.cards import card_to_text
+from factory_channels.cards import approval_card, card_to_text, escalation_card
 from factory_channels.chat import HELP, FactoryChat
 
 
@@ -105,6 +105,100 @@ def test_chat_renders_events_and_finishes():
     assert replies[2].card and "/continue" in card_to_text(replies[2].card)
     assert "pull/1" in replies[3].text
     assert chat.active() == []
+
+
+def _contract(n_scenarios: int) -> str:
+    from factory_core.spec import draft_to_files, render_markdown
+    from factory_core.testing import greeter_draft
+
+    case = (
+        "  - name: Ann is greeted {i}\n    ac_id: AC-2\n"
+        "    story: {{given: [Ann has an account.], when: Ann asks for a greeting.,\n"
+        "            then: ['She sees “Hello, Ann!”.']}}\n"
+        "    given: [{{op: greet, input: {{name: Bob}}}}]\n"
+        "    when: {{op: greet, input: {{name: Ann}}}}\n    then: {{output: {{greeting: 'Hello, Ann!'}}}}\n"
+    )
+    draft = greeter_draft()
+    draft.scenarios["greet.yaml"] = "cases:\n" + "".join(case.format(i=i) for i in range(n_scenarios))
+    files = draft_to_files(draft)
+    files.pop("intent.md")
+    return render_markdown(files)
+
+
+def test_a_new_build_request_is_not_swallowed_by_the_active_feature():
+    be = FakeBackend()
+    chat = FactoryChat(be)
+    chat.handle("c", "u", text="build greeting in acme/shop")
+    (reply,) = chat.handle("c", "u", text="build a clear button in acme/todo")
+    assert "still on feature" in reply.text and "/reset" in reply.text
+    assert be.sent == [] and len(be.started) == 1
+    chat.handle("c", "u", text="/reset")
+    chat.handle("c", "u", text="build a clear button in acme/todo")
+    assert len(be.started) == 2
+
+
+def test_a_feature_that_already_finished_releases_the_chat():
+    from factory_channels.backend import FeatureFinished
+
+    be = FakeBackend()
+    chat = FactoryChat(be)
+    chat.handle("c", "u", text="build greeting in acme/shop")
+
+    def finished(key: str, **kw: Any) -> None:
+        raise FeatureFinished("this feature has already finished (aborted)")
+
+    be.send = finished  # type: ignore[method-assign]
+    (reply,) = chat.handle("c", "u", text="/abort")
+    assert "already finished (aborted)" in reply.text and chat.active() == []
+    chat.handle("c", "u", text="build a clear button in acme/todo")
+    assert len(be.started) == 2
+
+
+def test_approval_card_leads_with_stories_and_keeps_raw_data_out_of_sight():
+    card = approval_card(_contract(1), "Returns {removed: <count>}.", [])
+    text = card_to_text(card)
+    assert "Returns {removed: <count>}." in text
+    assert "<\u200bcount>" in json.dumps(card, ensure_ascii=False), "Teams would strip a bare <count> as a tag"
+    assert "**Scenario: Ann is greeted 0** (AC-2)" in text
+    assert "**When** ann asks for a greeting." not in text and "**When** Ann asks for a greeting." in text
+    assert "**Then** she sees “Hello, Ann!”." in text
+    assert "op:" not in text and "input:" not in text, "no raw YAML in the visible card"
+    assert "**What it must do**" in text and "Feature ID" not in text
+    raw = json.dumps(card, ensure_ascii=False)
+    assert "greet (name: Ann)" in raw and "greet (name: Ann)" not in text, "the exact checks are one click away"
+    assert "|---|" not in raw, "Teams cannot render Markdown tables"
+
+
+def test_one_unreadable_story_does_not_turn_the_card_into_raw_yaml():
+    contract = _contract(2).replace("then: ['She sees “Hello, Ann!”.']", "then: [7]", 1)
+    text = card_to_text(approval_card(contract, "s", []))
+    assert "could not be read" in text and "greet (name: Ann)" in text, "the broken one shows its exact checks"
+    assert "**Then** she sees “Hello, Ann!”." in text, "the other scenario still shows its story"
+    assert "op:" not in text
+
+
+def test_approval_card_stays_under_the_teams_size_limit():
+    card = approval_card(_contract(40), "summary", [])
+    assert len(json.dumps(card, ensure_ascii=False).encode()) <= 26_000
+    assert "not shown here (Teams card size limit)" in card_to_text(card)
+
+
+def test_escalation_card_shows_failing_checks_first():
+    data = {
+        "iteration": 9,
+        "commit": "9f413bedca",
+        "gates": [
+            {"name": "unit", "status": "pass", "required": True, "summary": "ok"},
+            {"name": "contract", "status": "fail", "required": True, "summary": "1 failed",
+             "failures": ["example:greet:empty name"]},
+            {"name": "security", "status": "skip", "required": False, "summary": "gitleaks not installed"},
+        ],
+    }
+    text = card_to_text(escalation_card("the same failures repeated 3 times", "", data))
+    assert "The same failures repeated 3 times\nAttempt 9 · commit 9f413be" in text
+    assert "- ❌ **contract examples**: 1 failed — empty name" in text
+    assert "✅ **Passing:** unit tests" in text and "⏭️ **Not checked:** security (gitleaks not installed)" in text
+    assert text.index("What is failing") < text.index("Passing")
 
 
 # ------------------------------------------------------------------------------------------- gh-aw

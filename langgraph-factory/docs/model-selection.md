@@ -23,7 +23,8 @@ models:
 
 Rules:
 
-- **Roles:** `grill`, `driver_writer`, `planner`, `builder`, `reviewer`, `resolver`, `auditor`, `finisher`.
+- **Roles:** `grill`, `story_critic`, `driver_writer`, `planner`, `builder`, `reviewer`, `resolver`, `auditor`,
+  `finisher`.
 - **Missing role or field:** no flag is passed, and the CLI's own default model/effort is used.
 - **Values are passed through as-is.** They become `--model` / `--effort` (Claude Code), `--model` /
   `--reasoning-effort` (Copilot CLI), or `--model` / `-c model_reasoning_effort=…` (Codex).
@@ -51,6 +52,7 @@ or the [Codex models page](https://developers.openai.com/codex/models).
 | Role (node) | Calls per feature | What it needs | Recommended | Effort |
 |---|---|---|---|---|
 | `grill` (`grill_turn`) | one per interview round (2–5) | Finds edge cases and drafts the contract. A weak contract means a wrong feature, but outputs are short. | **Mid** | medium |
+| `story_critic` (`grill_turn`) | once per draft with scenarios (≤3) | Checks that each scenario's plain-English story says exactly what its data tests. Careful reading, short output; a miss means the human approves something other than what is tested. | **Mid** | low |
 | `driver_writer` (`freeze`) | 1–3 (freeze retries) | Thin glue code filled in from a stack template. The freeze check catches mistakes. | **Low → Mid** | low |
 | `planner` (`plan`) | 1 | Breaks the feature into a task graph and writes the per-task briefs. Every builder depends on it, and it's cheap because it runs once. | **High** | high |
 | `builder` (`implement`) | tasks × (1 + review fixes) + fix rounds; **most of the tokens** | Writes the real code with TDD. Code quality drives the number of verify iterations. | **Mid** (High for large or legacy repos) | high |
@@ -67,6 +69,7 @@ or the [Codex models page](https://developers.openai.com/codex/models).
 models:
   copilot:
     grill:         {model: claude-sonnet-4.6, effort: medium}
+    story_critic:  {model: claude-sonnet-4.6, effort: low}
     driver_writer: {model: claude-haiku-4.5}
     planner:       {model: claude-opus-4.6, effort: high}
     builder:       {model: claude-sonnet-4.6, effort: high}
@@ -76,6 +79,7 @@ models:
     finisher:      {model: claude-haiku-4.5}
   claude:
     grill:         {model: sonnet, effort: medium}
+    story_critic:  {model: sonnet, effort: low}
     driver_writer: {model: haiku, effort: low}
     planner:       {model: opus, effort: high}
     builder:       {model: sonnet, effort: high}
@@ -85,6 +89,7 @@ models:
     finisher:      {model: haiku, effort: low}
   codex:
     grill:         {model: gpt-6.2-sol, effort: medium}
+    story_critic:  {model: gpt-6.2-sol, effort: low}
     driver_writer: {model: gpt-6-luna, effort: low}
     planner:       {model: gpt-6.2-astra, effort: high}
     builder:       {model: gpt-6.2-sol, effort: high}

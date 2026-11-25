@@ -20,6 +20,8 @@ from pydantic import BaseModel
 
 from ..runtime import FactoryRuntime
 
+FINISHED = {"pr_opened", "aborted"}
+
 
 class FeatureRequest(BaseModel):
     request: str
@@ -63,7 +65,9 @@ def create_app(runtime: FactoryRuntime | None = None) -> FastAPI:
         st = rt.status(key)
         if not st["exists"]:
             raise HTTPException(404, "unknown feature")
-        if st["busy"] or not st["waiting_for"]:
+        if st["status"] in FINISHED:
+            raise HTTPException(410, f"this feature has already finished ({st['status']})")
+        if st["busy"] or not (st["waiting_for"] or st["stopped"]):
             raise HTTPException(409, "the factory is working; it will ask when it needs you")
         rt.reply(key, msg.model_dump(exclude_none=True))
         return {"accepted": True}

@@ -41,6 +41,12 @@ def feature_key(request: str) -> str:
     return "-".join(words + [uuid.uuid4().hex[:6]])
 
 
+def _is_abort(answer: dict[str, Any] | str) -> bool:
+    if isinstance(answer, str):
+        return answer.strip().lower() in ("/abort", "abort")
+    return str(answer.get("action") or "").lower() == "abort" or _is_abort(str(answer.get("text") or ""))
+
+
 class FactoryRuntime:
     def __init__(
         self,
@@ -106,6 +112,18 @@ class FactoryRuntime:
     def reply(self, key: str, answer: dict[str, Any] | str, wait: bool = False) -> None:
         if self.busy(key):
             raise RuntimeError("the factory is still working on this feature; wait for its next question")
+        snap = self.graph.get_state(self.config(key))
+        waiting = any(getattr(t, "interrupts", ()) for t in snap.tasks)
+        if snap.next and not waiting:
+            if _is_abort(answer):
+                self._errors.pop(key, None)
+                self.services.events.emit(key, "aborted", "🛑 Aborted.", terminal=True)
+                return
+            # The last run stopped mid-step (an error, or the app restarted): any other message re-runs that step
+            # from its checkpoint instead of being lost.
+            self.services.events.emit(key, "retry", f"Retrying {', '.join(snap.next)}")
+            self._submit(key, None, wait)
+            return
         self._submit(key, Command(resume=answer), wait)
 
     def busy(self, key: str) -> bool:
@@ -125,6 +143,8 @@ class FactoryRuntime:
             "stack": values.get("stack"),
             "iteration": values.get("iteration"),
             "waiting_for": interrupts[0] if interrupts and not self.busy(key) else None,
+            # stopped mid-step (an error or an app restart); a message re-runs that step, see reply()
+            "stopped": bool(snap.next) and not interrupts and not self.busy(key),
             "pr_url": values.get("pr_url"),
             "manifest_hash": values.get("manifest_hash"),
             "last_report": values.get("last_report"),

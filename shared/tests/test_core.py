@@ -75,9 +75,9 @@ def test_grill_questions_are_structured_rounds_with_recommendations():
     assert turn.questions[0].body == "Trim the name?" and turn.questions[0].render(1) == "1. **Q1** - Trim the name?"
     assert turn.questions[1].render(2).splitlines() == [
         "2. **Q2** - **Blank names**: Reject or fall back?",
-        "   A) reject",
-        "   B) fall back",
-        "   ➡️ Recommended: A, with `name must not be blank`",
+        "   - **A)** reject",
+        "   - **B)** fall back",
+        "   - ➡️ Recommended: A, with `name must not be blank`",
     ]
 
 
@@ -206,6 +206,42 @@ def test_critic_flags_uncovered_acceptance_criteria():
     draft.intent.acceptance_criteria.append(AcceptanceCriterion(id="AC-9", description="untested"))
     draft = files_to_draft(draft_to_files(draft))
     assert any("AC-9" in p for p in critique(draft))
+
+
+STORY_SCENARIO = """suite: greet
+cases:
+  - name: Ann is greeted by name
+    ac_id: AC-2
+{story}    when: {{op: greet, input: {{name: Ann}}}}
+    then: {{output: {{greeting: "Hello, Ann!"}}}}
+"""
+
+
+def test_critic_requires_a_plain_english_story_per_scenario():
+    from factory_core.pipeline import critique, story_critic_prompt
+
+    draft = greeter_draft()
+    draft.scenarios["greet.yaml"] = STORY_SCENARIO.format(story="")
+    assert critique(draft) == ["scenarios/greet.yaml: case 'Ann is greeted by name' needs a plain-English `story` "
+                               "(given / when / then)"]
+    assert story_critic_prompt(draft) is None
+
+    draft.scenarios["greet.yaml"] = STORY_SCENARIO.format(
+        story="    story: {when: Ann asks for a greeting., then: [She is greeted with “Hello, Ann!”.]}\n"
+    )
+    assert critique(draft) == []
+    assert "Hello, Ann!" in (story_critic_prompt(draft) or "")
+
+    draft.scenarios["greet.yaml"] = STORY_SCENARIO.format(story="    story: {when: Ann asks.}\n")
+    assert any("at least one 'then'" in p for p in critique(draft))
+
+
+def test_story_sentence_split_by_a_yaml_colon_is_read_as_one_sentence():
+    from factory_core.tad_runner.loader import parse_story
+
+    # unquoted `- It fails with the error: Not found.` is YAML for {"It fails with the error": "Not found."}
+    story = parse_story({"when": "Ann asks.", "then": [{"It fails with the error": "Not found."}]}, "s")
+    assert story["then"] == ["It fails with the error: Not found."]
 
 
 # ------------------------------------------------------------------------------------------------ agents

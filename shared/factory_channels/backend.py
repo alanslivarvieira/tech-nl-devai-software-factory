@@ -42,6 +42,10 @@ class ConversationBackend(Protocol):
 
 
 # ------------------------------------------------------------------------------------------ LangGraph
+class FeatureFinished(RuntimeError):
+    """The feature already ended (PR opened or aborted); the conversation can move on."""
+
+
 class LangGraphBackend:
     PASS = {"questions", "approval_needed", "escalation", "pr_opened", "error"}
 
@@ -69,6 +73,8 @@ class LangGraphBackend:
         r = self.client.post(f"/features/{key}/messages", json=payload)
         if r.status_code == 409:
             raise RuntimeError("The factory is still working — I'll ping you when it needs you.")
+        if r.status_code == 410:
+            raise FeatureFinished(str(r.json().get("detail") or "this feature has already finished"))
         r.raise_for_status()
 
     def poll(self, key: str, cursor: Any) -> tuple[list[FactoryEvent], Any]:

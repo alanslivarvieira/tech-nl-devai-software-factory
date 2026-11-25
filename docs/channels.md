@@ -27,11 +27,18 @@ uv run factory-run --fake greeter --repo examples/targets/python-greeter --reque
 
 Drop `--fake` to use a real coding agent CLI (`copilot`, `claude` or `codex` must be installed and logged in).
 
+To run the docker-compose stack against a real GitHub repo, leave `FACTORY_FAKE_AGENT` unset and export
+`GITHUB_TOKEN` (git clone/push + opening the PR) and the engine's credential, e.g. in PowerShell
+`$env:GITHUB_TOKEN = $env:COPILOT_GITHUB_TOKEN = (gh auth token)`. In chat, `build <what> in owner/repo`
+is expanded to `https://github.com/owner/repo.git`.
+
 ## Option 2 — terminal chat against the API
 
 ```bash
 cd langgraph-factory && FACTORY_FAKE_AGENT=greeter docker compose up --build
 ```
+
+On Windows PowerShell, set the variable first: `$env:FACTORY_FAKE_AGENT = "greeter"; docker compose up --build`.
 
 ```bash
 uv run factory-chat --backend langgraph --url http://localhost:8080
@@ -50,6 +57,11 @@ Start the bot (no Azure credentials → local anonymous mode):
 ```bash
 uv run factory-teams-bot
 ```
+
+Run the bot on the host, not in Docker: the Playground and the Emulator tell the bot to reply to
+`http://localhost:<port>`, which a containerised bot cannot reach. The factory itself can stay in Docker
+(`docker compose up`); the host bot talks to it on `http://localhost:8080`. The `teams` compose profile is for real
+Teams, whose reply address is public.
 
 **Microsoft 365 Agents Playground** (renders Teams UI incl. Adaptive Cards, no tenant needed):
 
@@ -87,7 +99,8 @@ issue in the hub repository.
 2. Set `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID / CLIENTSECRET / TENANTID` for the bot.
 3. Edit `shared/factory_channels/teams_bot/appPackage/manifest.json` (`${{TEAMS_APP_ID}}`, `${{BOT_ID}}`),
    zip it with the two icons and upload it in Teams (or via the Teams Developer Portal).
-4. With docker-compose: `docker compose --profile teams up --build` runs the bot next to the factory.
+4. With docker-compose: `docker compose --profile teams up --build` runs the bot next to the factory. Pass the
+   credentials as `BOT_APP_ID`, `BOT_APP_PASSWORD` and `BOT_TENANT_ID`; compose maps them to the variables above.
 
 The bot pushes factory events proactively (questions, approval cards, escalations, the PR link) into the
 conversation that started the feature.

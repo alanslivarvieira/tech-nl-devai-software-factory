@@ -1,0 +1,23 @@
+{
+ "pg-check": {
+  "feature": null,
+  "cursor": 0,
+  "done": false,
+  "repo": "",
+  "history": []
+ },
+ "0f366c50-1de6-482d-bd57-38a05686e32c": {
+  "feature": "a-clear-completed-button-32b125",
+  "cursor": 89,
+  "done": false,
+  "repo": "alanslivarvieira/todo-app",
+  "history": []
+ },
+ "a0157506-135d-4826-ae1c-862cc9c7a229": {
+  "feature": "a-clear-completed-button-31ad58",
+  "cursor": 31,
+  "done": true,
+  "repo": "alanslivarvieira/todo-app",
+  "history": []
+ }
+}

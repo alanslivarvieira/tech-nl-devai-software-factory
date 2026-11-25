@@ -57,7 +57,32 @@ overrides (they win over the skill where they differ — you run headless, there
   field omitted; `<null>` = null; `<empty>` = empty string. Mark rows that already pass on today's code
   with `baseline` = `existing` (regression guards); new behaviour leaves it empty.
 - `scenarios/<name>.yaml` for multi-step/stateful behaviour:
-  `suite`, `cases: [{name, ac_id, given: [{op, input}], when: {op, input}, then: {output|output_subset|error|error_contains, state: [{op, input, output}]}}]`.
+  `suite`, `cases: [{name, ac_id, story, given: [{op, input}], when: {op, input}, then: {output|output_subset|error|error_contains, state: [{op, input, output}]}}]`.
+  **Every scenario case needs a `story`** — the plain-English version the human reviews and approves:
+  `story: {given: [sentences], when: sentence, then: [sentences]}`. Write it for a domain expert, not a
+  programmer: no op names, no JSON, no field names (say "Todo C is completed", not `status: done`). It must
+  say exactly what the data checks — one `then` sentence per assertion, nothing the data does not check,
+  nothing it checks left out. A separate critic compares the two. Give the case a readable `name` too
+  (e.g. "Clear only completed todos").
+  ```yaml
+  - name: Clear only completed todos
+    ac_id: AC-1
+    story:
+      given:
+        - Todo A is pending.
+        - Todo B is in progress.
+        - Todo C is completed.
+      when: The user clears completed todos.
+      then:
+        - Exactly one todo is removed.
+        - Todo A is still pending and todo B is still in progress.
+        - No completed todos remain.
+        - Two todos are left.
+    given: [{op: create_todo, input: {title: A}}, ...]
+  ```
+  Write story sentences as block lists (`- …` lines) as above: in an inline `[a, b]` list a comma inside a
+  sentence would split it in two. Put a sentence in double quotes when it contains `: ` (colon + space),
+  e.g. `- "It fails with the error: No todo with id c."`, or YAML reads it as a key and a value.
 - `properties.yaml` for invariants (Hypothesis-generated inputs): `properties: [{name, ac_id, op, input:
   {field: {type: string|integer|float|boolean|one_of|list, ...}}, expect: [{path, ends_with|equals|
   contains|contains_input|matches|gte|lte|type|length_lte: ...}], allow_errors: [...]}]`.

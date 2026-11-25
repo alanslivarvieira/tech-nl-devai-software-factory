@@ -19,6 +19,7 @@ from factory_core.models import (
     GrillTurn,
     ReviewResult,
     SpecDraft,
+    StoryCheck,
     Task,
     TaskGraph,
     VerificationReport,
@@ -148,6 +149,9 @@ class Nodes:
             }
         assert turn.draft is not None
         problems = pipeline.critique(turn.draft)
+        story_warning = None
+        if not problems:
+            problems, story_warning = self._check_stories(state, turn.draft)
         rounds = state.get("critic_rounds", 0)
         if problems and rounds < 2:
             self._emit(
@@ -166,7 +170,7 @@ class Nodes:
             "contract_markdown": markdown,
             "intent_markdown": intent_preview,
             "intent_path": str(layout.intent_markdown),
-            "problems": problems,
+            "problems": problems + ([story_warning] if story_warning else []),
             "engine": turn.draft.intent.engine,
             "engine_recommendation": turn.engine_recommendation,
         }
@@ -179,6 +183,25 @@ class Nodes:
             "status": "awaiting_approval",
             "transcript": [{"role": "factory", "text": f"[draft contract presented]\n{turn.notes}"}],
         }
+
+    def _check_stories(self, state: FactoryState, draft: SpecDraft) -> tuple[list[str], str | None]:
+        """Story critic: (mismatches between each scenario's story and its data, warning if it could not run)."""
+        prompt = pipeline.story_critic_prompt(draft)
+        if prompt is None:
+            return [], None
+        self._emit(state, "story_check", "Checking that the plain-English scenarios match the test data")
+        res = self.s.run_agent(
+            state["feature_key"],
+            state["engine"],
+            AgentRequest(
+                role="story_critic", prompt=prompt, workdir=Path(state["workdir"]), read_only=True, schema=StoryCheck
+            ),
+        )
+        if not res.ok:
+            self._emit(state, "warning", "Story critic failed; presenting the draft unchecked", error=res.error[:2000])
+            return [], "The plain-English scenarios could not be checked against the test data — compare them yourself."
+        check: StoryCheck = res.data
+        return [f"Scenario {f.scenario!r}: {f.problem}" for f in check.findings], None
 
     def ask_human(self, state: FactoryState) -> dict[str, Any]:
         answer = interrupt(state.get("pending") or {"type": "questions", "questions": ["Anything else?"]})
@@ -193,6 +216,7 @@ class Nodes:
             update.update(engine=engine, engine_locked=True)
         if action == "abort" or text.lower() in ("/abort", "abort"):
             update.update(status="aborted")
+            self._emit(state, "aborted", "🛑 Aborted.", terminal=True)
             return update
         is_approval = action == "approve" or text.lower() in APPROVE
         if is_approval and (state.get("pending") or {}).get("type") == "approval" and state.get("draft"):
@@ -539,6 +563,14 @@ class Nodes:
                 "type": "escalation",
                 "reason": reason,
                 "report_markdown": report_markdown(report),
+                "iteration": report.iteration,
+                "commit": report.commit,
+                "gates": [
+                    {"name": g.name, "status": g.status, "required": g.required, "summary": g.summary,
+                     "failures": g.failures[:10]}
+                    for g in report.gates
+                ],
+                "audit": [f"{f.category}: {f.detail}" for f in report.audit if f.severity == "blocking"],
                 "options": ["continue", "amend", "abort"],
             }
             self._emit(
@@ -579,6 +611,7 @@ class Nodes:
         text = str(answer.get("text") or "").strip()
         action = str(answer.get("action") or text.split(" ", 1)[0]).lower().lstrip("/")
         if action == "abort":
+            self._emit(state, "aborted", "🛑 Aborted.", terminal=True)
             return {"status": "aborted", "escalation": None, "pending": None}
         if action == "amend":
             change = text.split(" ", 1)[1] if " " in text else text

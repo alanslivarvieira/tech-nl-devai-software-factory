@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .backend import ConversationBackend, FactoryEvent
+from .backend import ConversationBackend, FactoryEvent, FeatureFinished
 from .cards import approval_card, escalation_card
 
 HELP = """I'm the **AI software factory**. Tell me what to build and where:
@@ -22,7 +22,8 @@ HELP = """I'm the **AI software factory**. Tell me what to build and where:
 - `/new <owner/repo or path>[@branch] <what you want>`
 
 While we talk: answer my questions, `/engine copilot|claude|codex` to pick the coding agent, `/approve` to freeze
-the contract, `/status`, `/abort`. When I escalate: `/continue`, `/amend <change>`, `/abort`."""
+the contract, `/status`, `/abort`, `/reset` (leave the feature running and start something else). When I escalate:
+`/continue`, `/amend <change>`, `/abort`."""
 
 BUILD_RE = re.compile(
     r"^(?:build|create|add|implement)\s+(?P<request>.+?)\s+in\s+(?P<repo>[\w./:@~\\-]+)\s*$", re.I | re.S
@@ -87,6 +88,13 @@ class FactoryChat:
                 return self._start(cid, user, text)
             if low == "/status":
                 return [Reply(f"Working on feature `{c.feature}` in `{c.repo}`.")]
+            if not action and (NEW_RE.match(text) or (low.startswith("build ") and BUILD_RE.match(text))):
+                return [
+                    Reply(
+                        f"This chat is still on feature `{c.feature}` in `{c.repo}`. Send `/abort` to stop it, or "
+                        "`/reset` to leave it running here, then send your new request again."
+                    )
+                ]
             engine = engine or None
             if m := ENGINE_RE.search(text):
                 engine = m.group(1).lower()
@@ -97,6 +105,10 @@ class FactoryChat:
                     action, text = word.lower(), rest
             try:
                 self.backend.send(c.feature, text=text or None, action=action, user=user, engine=engine)
+            except FeatureFinished as exc:
+                c.done = True
+                self._save()
+                return [Reply(f"Feature `{c.feature}`: {exc}. Tell me what to build next.")]
             except RuntimeError as exc:
                 return [Reply(str(exc))]
             ack = {
@@ -169,9 +181,10 @@ class FactoryChat:
                 )
             ]
         if e.kind == "escalation":
-            return [Reply(card=escalation_card(e.data.get("reason") or e.message, e.data.get("report_markdown", "")))]
+            reason = e.data.get("reason") or e.message
+            return [Reply(card=escalation_card(reason, e.data.get("report_markdown", ""), e.data))]
         if e.kind == "pr_opened":
             return [Reply(f"🎉 **Done!** Pull request ready for review: {e.data.get('pr_url') or e.message}")]
         if e.kind == "error":
-            return [Reply(f"⚠️ {e.message}")]
+            return [Reply(f"⚠️ {e.message}\n\n_Reply `retry` to run that step again, or `/abort`._")]
         return [Reply(f"⏳ {e.message}")]

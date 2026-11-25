@@ -16,7 +16,10 @@ services:
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U factory"], interval: 3s, retries: 20 }
 
   app:
-    build: { context: .., dockerfile: langgraph-factory/Dockerfile }
+    build: &app-build
+      context: ..
+      dockerfile: langgraph-factory/Dockerfile
+      additional_contexts: { factory-sandbox: "service:sandbox-image" }   # build the base image first
     depends_on:
       db: { condition: service_healthy }
       sandbox-image: { condition: service_completed_successfully }
@@ -36,11 +39,12 @@ services:
 
   teams-bot:
     profiles: ["teams"]
-    build: { context: .., dockerfile: langgraph-factory/Dockerfile }
+    build: *app-build
     command: ["factory-teams-bot"]
     depends_on: [app]
     ports: ["3978:3978"]
     environment:
+      PORT: "3978"                                     # the image defaults PORT to the API's 8080
       FACTORY_BACKEND: langgraph
       FACTORY_API_URL: http://app:8080
       BOT_PUBLIC_URL: ${BOT_PUBLIC_URL:-http://teams-bot:3978}

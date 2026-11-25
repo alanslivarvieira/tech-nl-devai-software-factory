@@ -133,6 +133,43 @@ def _step(d: Any, where: str, phase: str) -> Step:
     return Step(op=str(d["op"]), input=inp, phase=phase)  # type: ignore[arg-type]
 
 
+def _sentences(value: Any) -> list[str] | None:
+    items = value if isinstance(value, list) else [value] if value else []
+    out = []
+    for s in items:
+        if isinstance(s, dict) and len(s) == 1:
+            # YAML reads `- The call fails with the error: Not found.` as {key: value}; it is one sentence
+            ((key, val),) = s.items()
+            s = f"{key}: {val}"
+        if not isinstance(s, str) or not s.strip():
+            return None
+        out.append(s.strip())
+    return out
+
+
+def parse_story(raw: Any, where: str) -> dict[str, list[str]]:
+    """The optional plain-English ``story`` of a scenario: what the human reviews. Not executed — the story
+    critic checks it against the data."""
+    if not isinstance(raw, dict) or set(raw) - {"given", "when", "then"}:
+        raise SpecError(f"{where}.story: must be a mapping with given / when / then")
+    story = {k: _sentences(raw.get(k)) for k in ("given", "when", "then")}
+    if any(v is None for v in story.values()):
+        raise SpecError(f"{where}.story: given / when / then must be sentences (text or a list of text)")
+    if not story["when"] or not story["then"]:
+        raise SpecError(f"{where}.story: needs a 'when' and at least one 'then'")
+    return story  # type: ignore[return-value]
+
+
+def scenario_stories(text: str) -> list[tuple[str, str, dict[str, list[str]] | None]]:
+    """``(name, ac_id, story or None)`` per scenario case, for human-facing renderings and the critics."""
+    doc = yaml.safe_load(text) or {}
+    out = []
+    for i, rc in enumerate(doc.get("cases") or []):
+        story = parse_story(rc["story"], f"cases[{i}]") if rc.get("story") else None
+        out.append((str(rc.get("name", "")), str(rc.get("ac_id") or ""), story))
+    return out
+
+
 def load_scenarios(path: Path) -> list[Case]:
     return parse_scenarios(path.read_text(encoding="utf-8"), default_suite=path.stem, source=path.name)
 
@@ -151,6 +188,8 @@ def parse_scenarios(text: str, default_suite: str, source: str = "") -> list[Cas
         if not name or name in names:
             raise SpecError(f"{where}: missing or duplicate name")
         names.add(name)
+        if rc.get("story") is not None:
+            parse_story(rc["story"], where)
         steps: list[Step] = []
         for g in rc.get("given") or []:
             s = _step(g, where + ".given", "given")

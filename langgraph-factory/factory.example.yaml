@@ -14,6 +14,7 @@ run_setup: true
 # models:
 #   copilot:
 #     grill:         {model: claude-sonnet-4.6, effort: medium}
+#     story_critic:  {model: claude-sonnet-4.6, effort: low}
 #     driver_writer: {model: claude-haiku-4.5}          # haiku takes no effort setting on Copilot
 #     planner:       {model: claude-opus-4.6, effort: high}
 #     builder:       {model: claude-sonnet-4.6, effort: high}
@@ -23,6 +24,7 @@ run_setup: true
 #     finisher:      {model: claude-haiku-4.5}
 #   claude:
 #     grill:         {model: sonnet, effort: medium}
+#     story_critic:  {model: sonnet, effort: low}
 #     driver_writer: {model: haiku, effort: low}
 #     planner:       {model: opus, effort: high}
 #     builder:       {model: sonnet, effort: high}
@@ -32,6 +34,7 @@ run_setup: true
 #     finisher:      {model: haiku, effort: low}
 #   codex:
 #     grill:         {model: gpt-6.2-sol, effort: medium}
+#     story_critic:  {model: gpt-6.2-sol, effort: low}
 #     driver_writer: {model: gpt-6-luna, effort: low}
 #     planner:       {model: gpt-6.2-astra, effort: high}
 #     builder:       {model: gpt-6.2-sol, effort: high}

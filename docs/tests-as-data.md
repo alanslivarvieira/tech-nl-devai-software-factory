@@ -39,8 +39,15 @@ empty name rejected,AC-3,,<empty>,,Name must not be entirely whitespace
 ```yaml
 suite: todo
 cases:
-  - name: unchecking a completed todo reactivates it
+  - name: Unchecking a completed todo reactivates it
     ac_id: AC-4
+    story:
+      given:
+        - The todo "buy milk" is done.
+      when: The user unchecks "buy milk".
+      then:
+        - "\"buy milk\" is no longer done."
+        - The list shows "buy milk" as not done.
     given: [{op: add, input: {title: buy milk}}, {op: toggle, input: {title: buy milk}}]
     when: {op: toggle, input: {title: buy milk}}
     then:
@@ -51,6 +58,12 @@ cases:
 
 `then` is mandatory and must assert something: `output` (exact), `output_subset`, `error`, `error_contains`
 or `no_error`, plus optional `state` queries.
+
+`story` is the plain-English version the human reviews in Teams and approves: `given` (sentences), `when`
+(a sentence) and `then` (one sentence per assertion). The runner does not execute it. New drafts need one on
+every scenario, and the **story critic** checks that each story says exactly what its data tests. The approval
+card shows the story first, with the exact checks one click away. Contracts frozen before stories existed
+remain valid; their scenarios are shown step by step instead.
 
 ## Properties
 

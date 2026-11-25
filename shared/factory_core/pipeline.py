@@ -17,6 +17,7 @@ from .resources import render_prompt
 from .spec import intent_markdown, intent_yaml, write_draft
 from .stack import StackProfile
 from .tad_runner.layout import SPECS_ROOT, SpecLayout
+from .tad_runner.loader import scenario_stories
 from .tad_runner.runner import freeze_check, validate
 
 BOT_AUTHOR = ["-c", "user.name=AI Software Factory", "-c", "user.email=factory@users.noreply.github.com"]
@@ -115,7 +116,36 @@ def critique(draft: SpecDraft) -> list[str]:
             layout = write_draft(draft, Path(tmp) / "spec")
         except Exception as exc:
             return [f"draft cannot be written: {exc}"]
-        return validate(layout)
+        return validate(layout) + missing_stories(draft)
+
+
+def missing_stories(draft: SpecDraft) -> list[str]:
+    """New drafts must explain every scenario in plain English (frozen contracts without stories stay valid)."""
+    problems = []
+    for file, text in sorted(draft.scenarios.items()):
+        try:
+            cases = scenario_stories(text)
+        except Exception:
+            continue  # the validator already reports malformed scenario files
+        problems += [
+            f"scenarios/{file}: case {name!r} needs a plain-English `story` (given / when / then)"
+            for name, _ac, story in cases
+            if story is None
+        ]
+    return problems
+
+
+def story_critic_prompt(draft: SpecDraft) -> str | None:
+    """Prompt for the story critic, or ``None`` when the draft has no scenario stories to check."""
+    files = {f: t for f, t in sorted(draft.scenarios.items()) if "story:" in t}
+    if not files:
+        return None
+    ops = "\n".join(
+        f"- `{op.name}`: {op.description or '(no description)'}; input {op.input or '{}'}; output {op.output or '{}'}"
+        for op in draft.intent.interface.ops
+    )
+    scenarios = "\n\n".join(f"### scenarios/{f}\n```yaml\n{t.rstrip()}\n```" for f, t in files.items())
+    return render_prompt("story_critic", title=draft.intent.title, ops=ops, scenarios=scenarios)
 
 
 # -------------------------------------------------------------------------------------------- freeze
