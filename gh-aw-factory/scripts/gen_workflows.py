@@ -76,12 +76,16 @@ permissions:
   actions: read
 engine: {engine}
 timeout-minutes: {timeout}
+concurrency:
+  job-discriminator: ${{{{ github.run_id }}}}
 network: defaults
 tools:
   github:
     toolsets: [issues, repos]
 {tools}steps:
   - uses: actions/checkout@v4
+    with:
+      persist-credentials: false
   - uses: actions/setup-python@v5
     with:
       python-version: "3.12"
@@ -139,6 +143,9 @@ WRITE_TOOLS = """  edit:
 """
 READ_TOOLS = """  bash: ["cat", "ls", "find", "grep", "head", "tail", "wc", "git log", "git diff", "git show"]
 """
+# Codex cannot allow-list commands; read-only phases still hold no write token and export no patch.
+CODEX_READ_TOOLS = """  bash: ["*"]
+"""
 POST_STEPS = """post-steps:
   - name: Export the agent's changes as a patch (applied later by the guard step)
     if: always()
@@ -176,7 +183,7 @@ def render(phase: str, engine: str) -> str:
         title=cfg["title"],
         timeout=cfg["timeout"],
         ref=cfg["ref"],
-        tools=WRITE_TOOLS if cfg["writes"] else READ_TOOLS,
+        tools=WRITE_TOOLS if cfg["writes"] else CODEX_READ_TOOLS if engine == "codex" else READ_TOOLS,
         post_steps=POST_STEPS if cfg["writes"] else "",
         safe_outputs=SAFE_COMMENT if cfg["comment"] else "",
         phase_rules=RULES[phase],
@@ -220,7 +227,7 @@ jobs:
           GH_TOKEN: ${{{{ steps.app-token.outputs.token }}}}
           FACTORY_STALL_LIMIT: ${{{{ vars.FACTORY_STALL_LIMIT || '3' }}}}
           FACTORY_MAX_ITERATIONS: ${{{{ vars.FACTORY_MAX_ITERATIONS || '0' }}}}
-          FACTORY_BOT_LOGINS: ${{{{ vars.FACTORY_BOT_LOGINS || 'github-actions[bot]' }}}}
+          FACTORY_BOT_LOGINS: ${{{{ vars.FACTORY_BOT_LOGINS || 'github-actions' }}}}
           FACTORY_RELAY_LOGINS: ${{{{ vars.FACTORY_RELAY_LOGINS || '' }}}}
 """
 

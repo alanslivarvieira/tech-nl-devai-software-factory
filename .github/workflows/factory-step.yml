@@ -1,0 +1,76 @@
+# Deterministic, non-agent steps. Only these jobs hold a WRITE token for the target repository.
+name: factory-step
+run-name: "factory step ${{ inputs.step }} #${{ inputs.issue }}"
+on:
+  workflow_dispatch:
+    inputs:
+      step: { required: true, type: choice, options: [prepare-contract, apply-patch, freeze, verify, open-pr] }
+      issue: { required: true, type: string }
+      approver: { required: false, type: string, default: "" }
+      run_id: { required: false, type: string, default: "" }
+      mode: { required: false, type: string, default: build }
+permissions:
+  contents: read
+  issues: write
+  actions: read
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install factory core (+ Python verification tooling)
+        run: pip install ./shared pytest pytest-cov diff-cover ruff mypy hypothesis
+      - name: Resolve target repository
+        id: target
+        run: python gh-aw-factory/scripts/step.py target-info --issue "${{ inputs.issue }}"
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - name: Write token for the target repository
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.FACTORY_APP_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.target.outputs.owner }}/${{ steps.target.outputs.name }}
+          ref: ${{ inputs.step == 'prepare-contract' && steps.target.outputs.base || steps.target.outputs.branch }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: target
+          fetch-depth: 0
+      - run: |
+          git -C target config user.name "AI Software Factory"
+          git -C target config user.email "factory@users.noreply.github.com"
+      # Toolchains for the verification gates (a clean runner every time = clean context).
+      - if: inputs.step == 'verify' && hashFiles('target/package.json') != ''
+        uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - if: inputs.step == 'verify' && hashFiles('target/pom.xml') != ''
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - if: inputs.step == 'verify' && hashFiles('target/**/*.csproj') != ''
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - if: inputs.step == 'verify' && hashFiles('target/go.mod') != ''
+        uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - name: Download the agent patch
+        if: inputs.step == 'apply-patch'
+        run: gh run download "${{ inputs.run_id }}" -n factory-patch -D /tmp/patch --repo "${{ github.repository }}"
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - name: Run step
+        run: |
+          python gh-aw-factory/scripts/step.py "${{ inputs.step }}" --issue "${{ inputs.issue }}" \
+            --approver "${{ inputs.approver }}" --mode "${{ inputs.mode }}" --patch /tmp/patch/agent.patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTORY_TARGET_TOKEN: ${{ steps.app-token.outputs.token }}
+          FACTORY_CONFIG: gh-aw-factory/factory.yaml
+      - if: always() && inputs.step == 'verify'
+        uses: actions/upload-artifact@v4
+        with: { name: verify-report, path: verify-out, if-no-files-found: ignore }

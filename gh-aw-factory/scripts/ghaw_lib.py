@@ -6,7 +6,8 @@ State model (one GitHub Issue per feature, in the hub repo):
 * body     the original request (```yaml factory-request```) and a hidden, factory-only state block
              ``<!-- factory:state {...} -->`` with the trust anchors (manifest root hash, freeze sha). Agents have
              no safe-output that can edit the body, so the anchors are out of their reach.
-* comments drafts (``<!-- factory:draft -->``), plans, verification reports and audits, each with a marker.
+* comments drafts, plans, verification reports and audits, each with a marker: ``[factory:<kind>]`` from agents
+             (gh-aw strips HTML comments from safe outputs), ``<!-- factory:<kind> ... -->`` from the steps.
 """
 
 from __future__ import annotations
@@ -38,7 +39,12 @@ ENGINES = ("copilot", "claude", "codex")
 HUMAN_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 STATE_RE = re.compile(r"<!-- factory:state (\{.*?\}) -->", re.S)
 REQUEST_RE = re.compile(r"```yaml factory-request\n(.*?)```", re.S)
-MARKER_RE = re.compile(r"<!-- factory:(?P<kind>[a-z]+)(?P<attrs>[^>]*)-->")
+# Agent comments go through gh-aw's safe-output sanitizer, which strips HTML comments, so agents use the
+# visible ``[factory:<kind>]`` form; the deterministic steps post the hidden ``<!-- factory:<kind> -->`` form.
+MARKER_RE = re.compile(
+    r"<!-- factory:(?P<kind>[a-z]+)(?P<attrs>[^>]*)-->|^\[factory:(?P<vkind>[a-z]+)(?P<vattrs>[^\]]*)\]", re.M
+)
+AGENT_MARKER = "[factory:{kind}]"
 JSON_BLOCK_RE = re.compile(r"```json\n(.*?)```", re.S)
 
 
@@ -53,8 +59,8 @@ class Comment:
         m = MARKER_RE.search(self.body)
         if not m:
             return None
-        attrs = dict(re.findall(r"(\w+)=(\S+)", m.group("attrs")))
-        return m.group("kind"), attrs
+        attrs = dict(re.findall(r"(\w+)=(\S+)", m.group("attrs") or m.group("vattrs") or ""))
+        return m.group("kind") or m.group("vkind"), attrs
 
     def json_block(self) -> Any:
         m = JSON_BLOCK_RE.findall(self.body)
@@ -164,8 +170,10 @@ def load_issue(repo: str, number: int) -> Issue:
 
 
 def _is_bot(login: str) -> bool:
-    bots = {b.strip() for b in os.environ.get("FACTORY_BOT_LOGINS", "github-actions,github-actions[bot]").split(",")}
-    return login in bots or login.endswith("[bot]")
+    # `gh issue view --json comments` reports bot authors without the "[bot]" suffix (e.g. "github-actions").
+    configured = os.environ.get("FACTORY_BOT_LOGINS") or ""
+    bots = {"github-actions"} | {b.strip().removesuffix("[bot]") for b in configured.split(",") if b.strip()}
+    return login.endswith("[bot]") or login.removesuffix("[bot]") in bots
 
 
 def comment(repo: str, number: int, body: str) -> None:

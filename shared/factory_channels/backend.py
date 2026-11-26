@@ -106,7 +106,7 @@ class GhAwBackend:
     """Relays the chat into a factory issue of the hub repo. ``token`` belongs to a service account listed in
     the hub's FACTORY_RELAY_LOGINS (the orchestrator then treats relayed messages as a collaborator's)."""
 
-    MARKER = re.compile(r"<!-- factory:(\w+)")
+    MARKER = re.compile(r"<!-- factory:(\w+)|^\[factory:(\w+)", re.M)
     PR = re.compile(r"https://\S+/pull/\d+")
 
     def __init__(
@@ -188,9 +188,9 @@ class GhAwBackend:
     @classmethod
     def to_event(cls, body: str) -> FactoryEvent:
         m = cls.MARKER.search(body)
-        kind = m.group(1) if m else None
+        kind = (m.group(1) or m.group(2)) if m else None
         clean = re.sub(r"<details>.*?</details>", "", body, flags=re.S)
-        clean = re.sub(r"<!--.*?-->", "", clean, flags=re.S).strip()
+        clean = re.sub(r"<!--.*?-->|^\[factory:\w+[^\]]*\]\n?", "", clean, flags=re.S | re.M).strip()
         if kind == "draft":
             return FactoryEvent("approval_needed", "Draft contract ready for review", {"contract_markdown": body})
         if "Escalation" in body or "contradicts itself" in body:

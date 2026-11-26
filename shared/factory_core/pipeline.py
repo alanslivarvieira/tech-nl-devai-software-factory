@@ -39,7 +39,7 @@ Post exactly ONE comment. Either:
   lettered options when there are alternatives, then `➡️ <your recommended answer>`, questions separated by
   `---`), ending with: "Reply `yes` to accept my recommendations, answer like `1A, 2B`, or in your own
   words. Say `/engine copilot|claude|codex` to pick the coding agent.", or
-- a draft that starts with the line `<!-- factory:draft -->`, a short summary for the human, then one fenced
+- a draft that starts with the line `[factory:draft]`, a short summary for the human, then one fenced
   block per file with a `file=` attribute, e.g. ```` ```yaml file=intent.yaml ```` and
   ```` ```csv file=examples/greet.csv ````, ending with: "Reply `/approve` to freeze this contract or
   comment what to change." """

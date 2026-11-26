@@ -21,6 +21,8 @@ permissions:
   actions: read
 engine: copilot
 timeout-minutes: 30
+concurrency:
+  job-discriminator: ${{ github.run_id }}
 network: defaults
 tools:
   github:
@@ -28,6 +30,8 @@ tools:
   bash: ["cat", "ls", "find", "grep", "head", "tail", "wc", "git log", "git diff", "git show"]
 steps:
   - uses: actions/checkout@v4
+    with:
+      persist-credentials: false
   - uses: actions/setup-python@v5
     with:
       python-version: "3.12"

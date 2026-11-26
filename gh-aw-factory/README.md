@@ -14,21 +14,26 @@ an **issue** in the hub; the PR is opened in the **target** repository.
 
 ## Setup
 
-1. Create a hub repository and copy into it: `gh-aw-factory/` and `shared/` (keep the paths), plus
-   `gh-aw-factory/.github/workflows/*` → `.github/workflows/`.
-2. Install the gh-aw CLI and compile the agentic workflows:
+1. Create a hub repository and copy into it: `gh-aw-factory/`, `shared/` and `factory-skills/` (keep the paths;
+   the agentic workflows deploy the skills from `factory-skills/`), plus `gh-aw-factory/.github/workflows/*` →
+   `.github/workflows/`.
+2. Install the gh-aw CLI and compile the agentic workflows, then commit the generated `*.lock.yml`,
+   `.github/aw/actions-lock.json` and `.gitattributes` (GitHub runs the lock files, not the `.md` sources):
    ```bash
    gh extension install github/gh-aw
    ```
    ```bash
-   python gh-aw-factory/scripts/gen_workflows.py && gh aw compile
+   python gh-aw-factory/scripts/gen_workflows.py && cp gh-aw-factory/.github/workflows/* .github/workflows/ && gh aw compile --strict
    ```
+   The first compile reports the new secrets as unapproved "safe update" changes; review them and re-run with
+   `--approve`.
 3. Create a **GitHub App** with *Contents: read & write*, *Pull requests: read & write*, *Issues: read & write*,
    *Actions: read & write*; install it on the hub and the target repositories. Hub settings:
    - variable `FACTORY_APP_ID`, secret `FACTORY_APP_PRIVATE_KEY`
    - engine secrets as required by gh-aw: `COPILOT_GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
    - optional variables: `FACTORY_DEFAULT_ENGINE`, `FACTORY_STALL_LIMIT` (3), `FACTORY_MAX_ITERATIONS` (0 = loop
-     until green), `FACTORY_RELAY_LOGINS` (the Teams bot's service account), `FACTORY_BOT_LOGINS`
+     until green), `FACTORY_RELAY_LOGINS` (the Teams bot's service account), `FACTORY_BOT_LOGINS` (extra bot logins,
+     e.g. your App's slug, so its comments are not treated as human; `github-actions` is always a bot)
 4. In each target repository add `templates/target-repo/.github/workflows/factory-guard.yml` as a **required
    status check** and the `CODEOWNERS` rule for `/.factory/specs/` (set `FACTORY_HUB_REPO` variable there).
 5. Thresholds: `gh-aw-factory/factory.yaml` (in the hub — agents cannot change it).
@@ -49,6 +54,9 @@ audit → pr → done`. On escalation reply `/continue`, `/amend <change>` or `/
   `network`) follows the gh-aw documentation at the time of writing; `gh aw compile --strict` is the source of
   truth — fix any reported keys there.
 - The orchestrator dispatches with the App token so that chained `workflow_run` events fire.
+- gh-aw's safe outputs strip HTML comments, so agents mark their comments with a visible first line
+  (`[factory:draft]`, `[factory:plan]`, `[factory:audit]`); the deterministic steps post with `gh` and keep the
+  hidden `<!-- factory:verify … -->` form. Both are only trusted on bot-authored comments.
 - Agent skills: each agentic workflow runs `python -m factory_core.skills deploy .` (from the APM-pinned
   [factory-skills/](../factory-skills/README.md)) before the agent starts. Grill uses `grilling` (grill-me),
   plan uses `writing-plans`, build runs the whole plan in one session with `executing-plans` +
