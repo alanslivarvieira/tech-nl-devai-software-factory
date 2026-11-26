@@ -61,9 +61,7 @@ def render(phase: str, issue, target: Path, repo: str, fix: bool) -> str:  # typ
             feature_id_hint=f"issue-{n}",
             markdown=True,
         )
-        return prompt + COMMENT_RULE.format(
-            n=n, repo=repo, marker="(questions: no marker; drafts: <!-- factory:draft -->)"
-        )
+        return prompt + COMMENT_RULE.format(n=n, repo=repo, marker="(questions: no marker; drafts: [factory:draft])")
     layout = SpecLayout(target / anchors["spec_rel"])
     if phase == "driver":
         return (
@@ -74,7 +72,7 @@ def render(phase: str, issue, target: Path, repo: str, fix: bool) -> str:  # typ
         prompt = pipeline.planner_prompt(target, anchors["spec_rel"], stack or "unknown", repo_map(target))
         return (
             prompt
-            + COMMENT_RULE.format(n=n, repo=repo, marker="<!-- factory:plan -->")
+            + COMMENT_RULE.format(n=n, repo=repo, marker="[factory:plan]")
             + ' Then give the task graph as one ```json block: {"tasks": [...]} (each task with its `plan`).'
         )
     if phase == "build":
@@ -111,7 +109,7 @@ def render(phase: str, issue, target: Path, repo: str, fix: bool) -> str:  # typ
         prompt = pipeline.auditor_prompt(target, layout, report, anchors["freeze_sha"], Path("/nonexistent"))
         return (
             prompt
-            + COMMENT_RULE.format(n=n, repo=repo, marker="<!-- factory:audit -->")
+            + COMMENT_RULE.format(n=n, repo=repo, marker="[factory:audit]")
             + ' Then give the findings as one ```json block: {"findings": [...]} (empty list if none).'
         )
     raise SystemExit(f"unknown phase {phase}")

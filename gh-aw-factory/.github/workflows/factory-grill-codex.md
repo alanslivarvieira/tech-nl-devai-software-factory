@@ -21,13 +21,17 @@ permissions:
   actions: read
 engine: codex
 timeout-minutes: 20
+concurrency:
+  job-discriminator: ${{ github.run_id }}
 network: defaults
 tools:
   github:
     toolsets: [issues, repos]
-  bash: ["cat", "ls", "find", "grep", "head", "tail", "wc", "git log", "git diff", "git show"]
+  bash: ["*"]
 steps:
   - uses: actions/checkout@v4
+    with:
+      persist-credentials: false
   - uses: actions/setup-python@v5
     with:
       python-version: "3.12"

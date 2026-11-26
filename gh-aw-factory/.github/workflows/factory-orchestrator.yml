@@ -50,5 +50,5 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           FACTORY_STALL_LIMIT: ${{ vars.FACTORY_STALL_LIMIT || '3' }}
           FACTORY_MAX_ITERATIONS: ${{ vars.FACTORY_MAX_ITERATIONS || '0' }}
-          FACTORY_BOT_LOGINS: ${{ vars.FACTORY_BOT_LOGINS || 'github-actions[bot]' }}
+          FACTORY_BOT_LOGINS: ${{ vars.FACTORY_BOT_LOGINS || 'github-actions' }}
           FACTORY_RELAY_LOGINS: ${{ vars.FACTORY_RELAY_LOGINS || '' }}

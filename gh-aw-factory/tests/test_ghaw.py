@@ -14,7 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import context  # noqa: E402
 import gen_workflows  # noqa: E402
-from ghaw_lib import Comment, Issue, request_body  # noqa: E402
+from ghaw_lib import Comment, Issue, _is_bot, request_body  # noqa: E402
 from orchestrator import Event, decide, event_from_github  # noqa: E402
 
 from factory_core.spec import render_markdown  # noqa: E402
@@ -147,7 +147,7 @@ def test_audit_findings_route():
             author=BOT,
             association="NONE",
             is_bot=True,
-            body="<!-- factory:audit -->\n```json\n" + json.dumps({"findings": findings}) + "\n```",
+            body="[factory:audit]\n```json\n" + json.dumps({"findings": findings}) + "\n```",
         )
 
     blocking = [{"severity": "blocking", "category": "weak_assertion", "detail": "x"}]
@@ -236,6 +236,16 @@ def test_issue_body_anchors_and_transcript():
     assert i.transcript()[-1]["text"] == "[draft contract presented]"
 
 
+def test_agent_comments_are_recognised_after_gh_aw_sanitizing(monkeypatch):
+    # gh CLI reports the Actions bot as "github-actions"; safe outputs strip HTML comments.
+    monkeypatch.setenv("FACTORY_BOT_LOGINS", "github-actions[bot]")
+    assert _is_bot("github-actions") and _is_bot("factory-app[bot]") and not _is_bot("alan")
+    sanitized = render_markdown(greeter_spec_files()).replace("<!-- factory:draft -->", "[factory:draft]")
+    draft = Comment("github-actions", "NONE", sanitized, is_bot=_is_bot("github-actions"))
+    assert kinds(decide(human("/approve"), issue(comments=[draft])))[-1] == ("dispatch", "factory-step.yml")
+    assert Comment(BOT, "NONE", "x [factory:draft] inline", is_bot=True).marker() is None
+
+
 def test_generated_workflows_are_consistent():
     names = gen_workflows.workflow_names()
     assert len(names) == 1 + 5 * 3
@@ -261,7 +271,7 @@ def test_context_renders_grill_and_build_prompts(tmp_path):
     grill = context.render(
         "grill", issue(comments=[Comment("alan", "MEMBER", "trim please")]), target, "acme/hub", False
     )
-    assert "Grill Master" in grill and "trim please" in grill and "<!-- factory:draft -->" in grill
+    assert "Grill Master" in grill and "trim please" in grill and "[factory:draft]" in grill
 
     layout = pipeline.write_contract(target, greeter_draft(), load_profile("python"))
     (layout.driver / "driver.py").write_text(greeter_driver(), encoding="utf-8")
@@ -270,7 +280,7 @@ def test_context_renders_grill_and_build_prompts(tmp_path):
     plan = Comment(
         BOT,
         "NONE",
-        '<!-- factory:plan -->\n```json\n{"tasks": [{"id": "a", "title": "Impl", '
+        '[factory:plan]\n```json\n{"tasks": [{"id": "a", "title": "Impl", '
         '"description": "do it"}, {"id": "b", "title": "Tests", "description": "test it", '
         '"depends_on": ["a"]}]}\n```',
         is_bot=True,

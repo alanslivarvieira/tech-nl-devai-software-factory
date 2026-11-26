@@ -210,7 +210,7 @@ def test_ghaw_backend_relays_through_issue_comments():
         {
             "id": 3,
             "user": {"login": "github-actions[bot]", "type": "Bot"},
-            "body": "<!-- factory:draft -->\nsummary\n```csv file=examples/a.csv\nx\n```",
+            "body": "[factory:draft]\nsummary\n```csv file=examples/a.csv\nx\n```",
         },
         {
             "id": 4,
